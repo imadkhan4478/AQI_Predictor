@@ -1,0 +1,24 @@
+# Core
+python-dotenv
+requests
+pandas
+numpy
+
+# Feature store / model registry
+hopsworks
+
+# Modeling
+scikit-learn
+tensorflow
+
+# Explainability
+shap
+
+# Web app
+streamlit
+fastapi
+uvicorn
+
+# EDA / plotting
+matplotlib
+seaborn

@@ -6,6 +6,7 @@ numpy
 
 # Feature store / model registry
 hopsworks
+confluent-kafka
 
 # Modeling
 scikit-learn

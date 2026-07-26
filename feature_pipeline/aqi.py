@@ -1,5 +1,7 @@
 """Compute US EPA Air Quality Index from pollutant concentrations."""
 
+import math
+
 # (concentration_low, concentration_high, aqi_low, aqi_high) per pollutant.
 # PM2.5/PM10 in ug/m3; CO in ppm; O3, SO2, NO2 in ppb.
 _BREAKPOINTS = {
@@ -55,14 +57,24 @@ _BREAKPOINTS = {
 # Molecular weights (g/mol), for converting ug/m3 -> ppb/ppm at 25C/1atm.
 _MOLECULAR_WEIGHTS = {"co": 28.01, "o3": 48.00, "so2": 64.066, "no2": 46.0055}
 
+# EPA breakpoints assume concentrations truncated to this many decimal places
+# before matching (e.g. PM10 to whole numbers) -- without this, values that
+# fall in the gap between adjacent buckets (e.g. PM10 = 54.5) match nothing.
+_TRUNCATE_DECIMALS = {"pm2_5": 1, "pm10": 0, "o3": 0, "co": 1, "so2": 0, "no2": 0}
+
 
 def _ugm3_to_ppb(conc_ugm3, molecular_weight):
     return conc_ugm3 * 24.45 / molecular_weight
 
 
+def _truncate(value, decimals):
+    factor = 10**decimals
+    return math.floor(value * factor) / factor
+
+
 def _sub_index(pollutant, concentration):
     breakpoints = _BREAKPOINTS[pollutant]
-    capped = min(concentration, breakpoints[-1][1])
+    capped = _truncate(min(concentration, breakpoints[-1][1]), _TRUNCATE_DECIMALS[pollutant])
     for c_low, c_high, i_low, i_high in breakpoints:
         if c_low <= capped <= c_high:
             return round((i_high - i_low) / (c_high - c_low) * (capped - c_low) + i_low)

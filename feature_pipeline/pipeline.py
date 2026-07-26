@@ -1,20 +1,16 @@
 """Fetch weather + pollution data, compute AQI, and write one feature row to Hopsworks."""
 
 import os
-import tempfile
 from datetime import datetime, timezone
 
-import hopsworks
 import pandas as pd
 from dotenv import load_dotenv
 
 from feature_pipeline.aqi import compute_aqi
 from feature_pipeline.fetch import get_pollution, get_weather
+from feature_pipeline.hopsworks_store import get_feature_group
 
 load_dotenv()
-
-FEATURE_GROUP_NAME = "aqi_features"
-FEATURE_GROUP_VERSION = 1
 
 
 def build_feature_row(city_name, weather, pollution):
@@ -55,20 +51,7 @@ def run():
     row = build_feature_row(city_name, weather, pollution)
     df = pd.DataFrame([row])
 
-    project = hopsworks.login(
-        project=os.environ["HOPSWORKS_PROJECT_NAME"],
-        api_key_value=os.environ["HOPSWORKS_API_KEY"],
-        cert_folder=os.path.join(tempfile.gettempdir(), "hopsworks_certs"),
-    )
-    fs = project.get_feature_store()
-    fg = fs.get_or_create_feature_group(
-        name=FEATURE_GROUP_NAME,
-        version=FEATURE_GROUP_VERSION,
-        description="Hourly weather + pollutant readings with computed AQI",
-        primary_key=["city_name", "timestamp"],
-        event_time="timestamp",
-        time_travel_format="HUDI",
-    )
+    fg = get_feature_group()
     fg.insert(df)
     print(f"Inserted feature row for {city_name} at {row['timestamp']} (AQI={row['aqi']})")
 

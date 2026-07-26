@@ -31,6 +31,9 @@ def build_rows(city_name, pollution_list, weather_hourly):
             {
                 "city_name": city_name,
                 "timestamp": timestamp,
+                "hour": timestamp.hour,
+                "day": timestamp.day,
+                "month": timestamp.month,
                 "temp": weather["temperature_2m"],
                 "feels_like": weather["apparent_temperature"],
                 "humidity": weather["relative_humidity_2m"],
@@ -50,6 +53,12 @@ def build_rows(city_name, pollution_list, weather_hourly):
                 "aqi": aqi,
             }
         )
+
+    rows.sort(key=lambda r: r["timestamp"])
+    previous_aqi = None
+    for row in rows:
+        row["aqi_change_rate"] = float(row["aqi"] - previous_aqi) if previous_aqi is not None else 0.0
+        previous_aqi = row["aqi"]
     return rows
 
 

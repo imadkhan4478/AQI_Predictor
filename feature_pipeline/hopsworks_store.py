@@ -24,3 +24,9 @@ def get_feature_group():
         event_time="timestamp",
         time_travel_format="HUDI",
     )
+
+
+def read_features_df():
+    """Read all rows currently stored in the feature group as a pandas DataFrame."""
+    fg = get_feature_group()
+    return fg.read()

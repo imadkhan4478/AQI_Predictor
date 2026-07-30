@@ -4,9 +4,28 @@ from dotenv import load_dotenv
 
 from training_pipeline.baseline_models import build_random_forest, build_ridge
 from training_pipeline.data import load_training_data, time_based_split
+from training_pipeline.deep_model import train_and_predict as train_predict_nn
 from training_pipeline.evaluate import evaluate
 
 load_dotenv()
+
+
+def _sklearn_train_predict(build_fn):
+    def train_predict(X_train, y_train, X_test):
+        model = build_fn()
+        model.fit(X_train, y_train)
+        return model.predict(X_test)
+
+    return train_predict
+
+
+# Every candidate is a (X_train, y_train, X_test) -> y_pred function, so
+# sklearn models and the TensorFlow model can be compared identically below.
+CANDIDATES = {
+    "Ridge": _sklearn_train_predict(build_ridge),
+    "RandomForest": _sklearn_train_predict(build_random_forest),
+    "NeuralNet": train_predict_nn,
+}
 
 
 def run():
@@ -14,15 +33,9 @@ def run():
     X_train, X_test, y_train, y_test = time_based_split(X, y, timestamps)
     print(f"Train: {len(X_train)} rows | Test: {len(X_test)} rows (most recent, held out)")
 
-    candidates = {
-        "Ridge": build_ridge(),
-        "RandomForest": build_random_forest(),
-    }
-
     results = {}
-    for name, model in candidates.items():
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
+    for name, train_predict in CANDIDATES.items():
+        y_pred = train_predict(X_train, y_train, X_test)
         results[name] = evaluate(y_test, y_pred)
 
     print("\nModel comparison (on held-out, most-recent 20% of data):")

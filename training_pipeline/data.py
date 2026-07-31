@@ -33,6 +33,26 @@ def add_time_features(df):
     return df
 
 
+def time_based_split(X, y, timestamps, test_fraction=0.2):
+    """Split chronologically (earliest rows train, most recent rows test) --
+    never shuffle time series data, or the model gets evaluated on data that
+    leaks information from its near-identical temporal neighbors."""
+    order = timestamps.sort_values().index
+    split_at = int(len(order) * (1 - test_fraction))
+    train_idx, test_idx = order[:split_at], order[split_at:]
+    return X.loc[train_idx], X.loc[test_idx], y.loc[train_idx], y.loc[test_idx]
+
+
+def load_raw_aqi_series():
+    """Full historical AQI series indexed by timestamp, reindexed to a regular
+    hourly grid with small gaps interpolated. ARIMA (unlike the row-wise models)
+    needs one continuous, evenly-spaced sequence rather than independent rows."""
+    df = read_features_df().sort_values("timestamp")
+    series = df.set_index("timestamp")["aqi"]
+    series = series.asfreq("h").interpolate()
+    return series
+
+
 def load_training_data():
     df = read_features_df()
     df = add_time_features(df)

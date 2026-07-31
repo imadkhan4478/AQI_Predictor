@@ -11,6 +11,7 @@ confluent-kafka
 # Modeling
 scikit-learn
 tensorflow
+statsmodels
 
 # Explainability
 shap

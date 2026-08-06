@@ -1,9 +1,11 @@
 """Fetch weather + pollution data, compute AQI, and write one feature row to Hopsworks."""
 
 import os
+import time
 from datetime import datetime, timezone
 
 import pandas as pd
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from dotenv import load_dotenv
 
 from feature_pipeline.aqi import compute_aqi
@@ -11,6 +13,8 @@ from feature_pipeline.fetch import get_pollution, get_weather
 from feature_pipeline.hopsworks_store import get_feature_group, get_latest_aqi
 
 load_dotenv()
+
+MAX_INSERT_ATTEMPTS = 3
 
 
 def build_feature_row(city_name, weather, pollution, previous_aqi=None):
@@ -58,7 +62,19 @@ def run():
     df = pd.DataFrame([row])
 
     fg = get_feature_group()
-    fg.insert(df)
+    for attempt in range(1, MAX_INSERT_ATTEMPTS + 1):
+        try:
+            fg.insert(df)
+            break
+        except RequestsConnectionError:
+            if attempt == MAX_INSERT_ATTEMPTS:
+                raise
+            wait_seconds = attempt * 2
+            print(
+                f"Hopsworks insert connection failed (attempt {attempt}/{MAX_INSERT_ATTEMPTS}). "
+                f"Retrying in {wait_seconds}s..."
+            )
+            time.sleep(wait_seconds)
     print(f"Inserted feature row for {city_name} at {row['timestamp']} (AQI={row['aqi']})")
 
 

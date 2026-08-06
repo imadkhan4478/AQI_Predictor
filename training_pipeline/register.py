@@ -9,16 +9,16 @@ import joblib
 from dotenv import load_dotenv
 
 from training_pipeline.baseline_models import build_random_forest
-from training_pipeline.data import FEATURE_COLUMNS, load_training_data, time_based_split
+from training_pipeline.data import FEATURE_COLUMNS, FORECAST_HORIZON_HOURS, load_training_data, time_based_split
 from training_pipeline.evaluate import evaluate
 
 load_dotenv()
 
-MODEL_NAME = "aqi_random_forest"
 
+def run(horizon_hours=FORECAST_HORIZON_HOURS):
+    model_name = f"aqi_random_forest_{horizon_hours}h"
 
-def run():
-    X, y, timestamps = load_training_data()
+    X, y, timestamps = load_training_data(horizon_hours)
     X_train, X_test, y_train, y_test = time_based_split(X, y, timestamps)
 
     # Honest metrics come from the held-out split (never trained on).
@@ -44,19 +44,20 @@ def run():
         )
         mr = project.get_model_registry()
         model = mr.python.create_model(
-            name=MODEL_NAME,
+            name=model_name,
             metrics=metrics,
             description=(
-                "Random Forest predicting AQI 3 days ahead for Lahore. "
+                f"Random Forest predicting AQI {horizon_hours}h ahead for Lahore. "
                 f"Features: {', '.join(FEATURE_COLUMNS)}. "
-                "Winner among Ridge/RandomForest/NeuralNet/ARIMA on held-out RMSE/MAE/R2."
+                "Winner among Ridge/RandomForest/NeuralNet/ARIMA on held-out RMSE/MAE/R2 (evaluated at 72h)."
             ),
             input_example=X.head(1),
         )
         model.save(model_dir)
-        print(f"Registered model '{MODEL_NAME}' version {model.version} in the Hopsworks Model Registry")
+        print(f"Registered model '{model_name}' version {model.version} in the Hopsworks Model Registry")
     finally:
         shutil.rmtree(model_dir, ignore_errors=True)
+    return metrics
 
 
 if __name__ == "__main__":

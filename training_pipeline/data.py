@@ -15,14 +15,14 @@ FEATURE_COLUMNS = [
 TARGET_COLUMN = "aqi_target"
 
 
-def add_target(df):
-    """Attach the AQI value from exactly FORECAST_HORIZON_HOURS later, matched by
+def add_target(df, horizon_hours=FORECAST_HORIZON_HOURS):
+    """Attach the AQI value from exactly horizon_hours later, matched by
     actual timestamp (not row position) so gaps in the hourly data don't silently
     misalign the label."""
     df = df.sort_values("timestamp").reset_index(drop=True)
     aqi_by_time = df.set_index("timestamp")["aqi"]
 
-    future_timestamps = df["timestamp"] + pd.Timedelta(hours=FORECAST_HORIZON_HOURS)
+    future_timestamps = df["timestamp"] + pd.Timedelta(hours=horizon_hours)
     df[TARGET_COLUMN] = aqi_by_time.reindex(future_timestamps).values
 
     return df
@@ -53,14 +53,14 @@ def load_raw_aqi_series():
     return series
 
 
-def load_training_data():
+def load_training_data(horizon_hours=FORECAST_HORIZON_HOURS):
     df = read_features_df()
     df = add_time_features(df)
-    df = add_target(df)
+    df = add_target(df, horizon_hours)
 
     before = len(df)
     df = df.dropna(subset=[TARGET_COLUMN])
-    print(f"Dropped {before - len(df)} rows with no 3-day-ahead label available (gaps / end of data)")
+    print(f"Dropped {before - len(df)} rows with no {horizon_hours}h-ahead label available (gaps / end of data)")
 
     X = df[FEATURE_COLUMNS]
     y = df[TARGET_COLUMN]

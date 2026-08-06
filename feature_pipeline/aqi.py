@@ -81,6 +81,27 @@ def _sub_index(pollutant, concentration):
     return None
 
 
+# (aqi_low, aqi_high, category_name, alert_severity). alert_severity is None
+# for the two "safe" categories, otherwise a label the app can key alert
+# styling/urgency off of.
+_CATEGORIES = [
+    (0, 50, "Good", None),
+    (51, 100, "Moderate", None),
+    (101, 150, "Unhealthy for Sensitive Groups", "warning"),
+    (151, 200, "Unhealthy", "serious"),
+    (201, 300, "Very Unhealthy", "critical"),
+    (301, 500, "Hazardous", "critical"),
+]
+
+
+def aqi_category(aqi_value):
+    """EPA category name + alert severity ('warning'/'serious'/'critical'/None) for an AQI value."""
+    for low, high, name, severity in _CATEGORIES:
+        if low <= aqi_value <= high:
+            return name, severity
+    return ("Hazardous", "critical") if aqi_value > 500 else ("Good", None)
+
+
 def compute_aqi(components):
     """components: dict with keys co, no2, o3, so2, pm2_5, pm10 in ug/m3 (as returned by OpenWeather)."""
     sub_indices = {}

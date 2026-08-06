@@ -1,6 +1,13 @@
 """Streamlit dashboard: current AQI + 3-day forecast, with hazardous-AQI alerts."""
 
 import os
+import sys
+from pathlib import Path
+
+# `streamlit run app/app.py` puts this file's own folder on sys.path, not the
+# repo root, so sibling packages (app.load_model, feature_pipeline, ...)
+# wouldn't otherwise resolve. Same fix as the EDA notebook's kernel-cwd issue.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
 import streamlit as st

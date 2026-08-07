@@ -81,25 +81,30 @@ def _sub_index(pollutant, concentration):
     return None
 
 
-# (aqi_low, aqi_high, category_name, alert_severity). alert_severity is None
-# for the two "safe" categories, otherwise a label the app can key alert
-# styling/urgency off of.
+# (aqi_low, aqi_high, category_name, alert_severity, color). alert_severity is
+# None for the two "safe" categories, otherwise a label the app can key alert
+# styling/urgency off of. Colors are the official EPA/AirNow AQI colors --
+# not our generic categorical palette. AQI color-coding is a globally
+# recognized convention (like traffic lights), so matching the real-world
+# standard beats forcing a brand-neutral scheme onto a domain that already
+# has its own universally recognized color language.
 _CATEGORIES = [
-    (0, 50, "Good", None),
-    (51, 100, "Moderate", None),
-    (101, 150, "Unhealthy for Sensitive Groups", "warning"),
-    (151, 200, "Unhealthy", "serious"),
-    (201, 300, "Very Unhealthy", "critical"),
-    (301, 500, "Hazardous", "critical"),
+    (0, 50, "Good", None, "#00e400"),
+    (51, 100, "Moderate", None, "#f2c200"),
+    (101, 150, "Unhealthy for Sensitive Groups", "warning", "#ff7e00"),
+    (151, 200, "Unhealthy", "serious", "#ff0000"),
+    (201, 300, "Very Unhealthy", "critical", "#8f3f97"),
+    (301, 500, "Hazardous", "critical", "#7e0023"),
 ]
 
 
 def aqi_category(aqi_value):
-    """EPA category name + alert severity ('warning'/'serious'/'critical'/None) for an AQI value."""
-    for low, high, name, severity in _CATEGORIES:
+    """EPA category name, alert severity ('warning'/'serious'/'critical'/None),
+    and the official EPA color for an AQI value."""
+    for low, high, name, severity, color in _CATEGORIES:
         if low <= aqi_value <= high:
-            return name, severity
-    return ("Hazardous", "critical") if aqi_value > 500 else ("Good", None)
+            return name, severity, color
+    return ("Hazardous", "critical", "#7e0023") if aqi_value > 500 else ("Good", None, "#00e400")
 
 
 def compute_aqi(components):

@@ -10,10 +10,14 @@ import joblib
 # hopsworks.login() has no timeout parameter of its own -- on a flaky
 # connection it can hang for 20+ minutes relying on the OS's default socket
 # timeout. We can't change that internal timeout, so instead we run the call
-# in a background thread and impose our own wait limit on top of it. Note:
-# the thread itself can't be forcibly killed if it times out -- it keeps
-# running until it finishes or the process exits -- but the caller stops
-# waiting on it and can retry.
+# in a background thread and impose our own wait limit on top of it.
+#
+# IMPORTANT: don't use the executor as a context manager here -- `with
+# ThreadPoolExecutor() as executor:` calls shutdown(wait=True) on exit, which
+# blocks until the background thread actually finishes, silently undoing the
+# timeout we just imposed. We shut down with wait=False instead: the thread
+# itself can't be forcibly killed (it keeps running until it finishes or the
+# process exits), but the caller stops waiting on it and moves on to retry.
 CONNECT_TIMEOUT_SECONDS = 20
 MAX_CONNECT_ATTEMPTS = 3
 
@@ -24,18 +28,28 @@ def _connect():
         api_key_value=os.environ["HOPSWORKS_API_KEY"],
         cert_folder=os.path.join(tempfile.gettempdir(), "hopsworks_certs"),
     )
+    last_error = None
     for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(hopsworks.login, **kwargs)
-            try:
-                return future.result(timeout=CONNECT_TIMEOUT_SECONDS)
-            except FutureTimeoutError:
-                if attempt == MAX_CONNECT_ATTEMPTS:
-                    raise TimeoutError(
-                        f"Hopsworks connection timed out after {MAX_CONNECT_ATTEMPTS} attempts "
-                        f"({CONNECT_TIMEOUT_SECONDS}s each) -- likely a local network issue."
-                    )
-                print(f"Hopsworks connection stalled (attempt {attempt}/{MAX_CONNECT_ATTEMPTS}), retrying...")
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(hopsworks.login, **kwargs)
+        try:
+            result = future.result(timeout=CONNECT_TIMEOUT_SECONDS)
+            executor.shutdown(wait=False)
+            return result
+        except FutureTimeoutError:
+            executor.shutdown(wait=False)
+            last_error = f"timed out after {CONNECT_TIMEOUT_SECONDS}s"
+        except Exception as e:
+            executor.shutdown(wait=False)
+            last_error = f"{type(e).__name__}: {e}"
+
+        if attempt < MAX_CONNECT_ATTEMPTS:
+            print(
+                f"Hopsworks connection failed ({last_error}), attempt {attempt}/{MAX_CONNECT_ATTEMPTS}. Retrying...",
+                flush=True,
+            )
+
+    raise ConnectionError(f"Could not connect to Hopsworks after {MAX_CONNECT_ATTEMPTS} attempts. Last error: {last_error}")
 
 
 def load_latest_model(model_name):

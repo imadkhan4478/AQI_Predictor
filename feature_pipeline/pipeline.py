@@ -28,21 +28,28 @@ def build_feature_row(city_name, weather, pollution, previous_aqi=None):
         "hour": timestamp.hour,
         "day": timestamp.day,
         "month": timestamp.month,
-        "temp": weather["main"]["temp"],
-        "feels_like": weather["main"]["feels_like"],
+        # Explicit float() on every column the Feature Group expects as
+        # 'double': the live pipeline inserts a single row at a time, so if a
+        # pollutant reading happens to be a whole number (e.g. OpenWeather
+        # returns "no": 0 instead of 0.0), pandas infers that column as int64
+        # for this one-row DataFrame -- clashing with the 'double' schema
+        # locked in during the original multi-row backfill and failing the
+        # insert. Same root cause as the earlier "pressure" bug in backfill.py.
+        "temp": float(weather["main"]["temp"]),
+        "feels_like": float(weather["main"]["feels_like"]),
         "humidity": weather["main"]["humidity"],
         "pressure": weather["main"]["pressure"],
-        "wind_speed": weather["wind"]["speed"],
+        "wind_speed": float(weather["wind"]["speed"]),
         "wind_deg": weather["wind"].get("deg", 0),
         "clouds": weather["clouds"]["all"],
-        "co": components["co"],
-        "no": components["no"],
-        "no2": components["no2"],
-        "o3": components["o3"],
-        "so2": components["so2"],
-        "pm2_5": components["pm2_5"],
-        "pm10": components["pm10"],
-        "nh3": components["nh3"],
+        "co": float(components["co"]),
+        "no": float(components["no"]),
+        "no2": float(components["no2"]),
+        "o3": float(components["o3"]),
+        "so2": float(components["so2"]),
+        "pm2_5": float(components["pm2_5"]),
+        "pm10": float(components["pm10"]),
+        "nh3": float(components["nh3"]),
         "dominant_pollutant": dominant_pollutant,
         "aqi": aqi,
         "aqi_change_rate": float(aqi - previous_aqi) if previous_aqi is not None else 0.0,

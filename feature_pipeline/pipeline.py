@@ -2,7 +2,7 @@
 
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from requests.exceptions import ConnectionError as RequestsConnectionError
@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from feature_pipeline.aqi import compute_aqi
 from feature_pipeline.fetch import get_pollution, get_weather
-from feature_pipeline.hopsworks_store import get_feature_group, get_latest_aqi
+from feature_pipeline.hopsworks_store import get_aqi_at, get_feature_group
 
 load_dotenv()
 
@@ -74,7 +74,15 @@ def run():
 
     weather = get_weather(lat, lon, api_key)
     pollution = get_pollution(lat, lon, api_key)
-    previous_aqi = get_latest_aqi(city_name)
+
+    # Change rate is defined against the immediately preceding hour, matching
+    # the backfill. If that hour is missing (a skipped run), we record 0.0
+    # rather than a delta spanning an arbitrary gap, which would hand the
+    # model a feature that means something different than it did in training.
+    observed_at = datetime.fromtimestamp(weather["dt"], tz=timezone.utc).replace(
+        minute=0, second=0, microsecond=0
+    )
+    previous_aqi = get_aqi_at(city_name, observed_at - timedelta(hours=1))
     row = build_feature_row(city_name, weather, pollution, previous_aqi)
     df = pd.DataFrame([row])
 

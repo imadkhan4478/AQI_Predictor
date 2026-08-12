@@ -36,14 +36,35 @@ def read_features_df():
     return fg.read()
 
 
-def get_latest_aqi(city_name):
-    """Most recent AQI value stored for this city, or None if no rows exist yet."""
+def get_aqi_at(city_name, timestamp):
+    """AQI recorded for this city at exactly `timestamp`, or None if absent.
+
+    Callers use this to build aqi_change_rate against the immediately
+    preceding hour. Returning None for a missing hour (rather than falling
+    back to whatever row happened to be latest) keeps the feature meaning the
+    same in production as it does in the backfill, where rows are contiguous.
+
+    Note the narrow except: a genuinely empty feature group is expected on a
+    fresh feature-group version, but an auth or permission failure must not be
+    silently converted into "no previous reading" -- that would write a wrong
+    change rate into the store with no error surfaced anywhere.
+    """
     try:
         df = read_features_df()
-    except RestAPIError:
-        return None  # feature group has no data yet (e.g. brand new version)
+    except RestAPIError as error:
+        if _is_empty_feature_group(error):
+            return None
+        raise
 
-    city_rows = df[df["city_name"] == city_name]
-    if city_rows.empty:
+    match = df[(df["city_name"] == city_name) & (df["timestamp"] == timestamp)]
+    if match.empty:
         return None
-    return city_rows.sort_values("timestamp").iloc[-1]["aqi"]
+    return match.iloc[-1]["aqi"]
+
+
+def _is_empty_feature_group(error):
+    """Hopsworks raises a generic RestAPIError when a feature group exists but
+    has no materialised data yet, which is a normal state right after creating
+    a new feature group version."""
+    message = str(error).lower()
+    return "no data" in message or "not found" in message or "empty" in message

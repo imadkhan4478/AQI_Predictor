@@ -20,7 +20,17 @@ MAX_INSERT_ATTEMPTS = 3
 def build_feature_row(city_name, weather, pollution, previous_aqi=None):
     components = pollution["list"][0]["components"]
     aqi, dominant_pollutant, _ = compute_aqi(components)
-    timestamp = datetime.fromtimestamp(weather["dt"], tz=timezone.utc)
+    # Floor to the hour. OpenWeather's "dt" is the observation calculation
+    # time (e.g. 11:19:16), but the backfill wrote hour-aligned timestamps
+    # taken from the hourly air-pollution history endpoint. Labels are built
+    # by matching a row to the row at exactly t+24/48/72h
+    # (training_pipeline/data.py), so an unaligned timestamp can never match
+    # anything -- every live row we collected was silently unusable for
+    # training. Flooring also lets the (city_name, timestamp) primary key
+    # deduplicate two runs landing in the same hour.
+    timestamp = datetime.fromtimestamp(weather["dt"], tz=timezone.utc).replace(
+        minute=0, second=0, microsecond=0
+    )
 
     return {
         "city_name": city_name,

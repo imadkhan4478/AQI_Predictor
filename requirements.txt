@@ -22,6 +22,9 @@ plotly
 fastapi
 uvicorn
 
+# Testing
+pytest
+
 # EDA / plotting
 matplotlib
 seaborn

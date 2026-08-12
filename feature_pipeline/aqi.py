@@ -74,7 +74,16 @@ def _truncate(value, decimals):
 
 def _sub_index(pollutant, concentration):
     breakpoints = _BREAKPOINTS[pollutant]
-    capped = _truncate(min(concentration, breakpoints[-1][1]), _TRUNCATE_DECIMALS[pollutant])
+    # Clamp into the breakpoint range at both ends. The upper clamp keeps
+    # readings above the top breakpoint pinned to AQI 500. The lower clamp
+    # matters because OpenWeather's pollution data comes from a chemical
+    # transport model that occasionally emits small negative concentrations
+    # for trace gases -- physically impossible, but a real numerical artifact.
+    # EPA breakpoints start at 0, so without this a negative reading matches
+    # no range and silently returns None, which then blows up the max() in
+    # compute_aqi. Treat "negative" as "none detected".
+    clamped = min(max(concentration, breakpoints[0][0]), breakpoints[-1][1])
+    capped = _truncate(clamped, _TRUNCATE_DECIMALS[pollutant])
     for c_low, c_high, i_low, i_high in breakpoints:
         if c_low <= capped <= c_high:
             return round((i_high - i_low) / (c_high - c_low) * (capped - c_low) + i_low)
@@ -117,7 +126,15 @@ def compute_aqi(components):
             concentration = _ugm3_to_ppb(concentration, _MOLECULAR_WEIGHTS[pollutant])
             if pollutant == "co":
                 concentration /= 1000  # ppb -> ppm
-        sub_indices[pollutant] = _sub_index(pollutant, concentration)
+        sub_index = _sub_index(pollutant, concentration)
+        if sub_index is not None:
+            sub_indices[pollutant] = sub_index
+
+    # Clamping above should make an unmatched pollutant impossible, but a
+    # reading we can't score at all must fail loudly rather than quietly
+    # producing an AQI derived from nothing.
+    if not sub_indices:
+        raise ValueError(f"No pollutant could be scored from components: {components}")
 
     overall_aqi = max(sub_indices.values())
     dominant_pollutant = max(sub_indices, key=sub_indices.get)

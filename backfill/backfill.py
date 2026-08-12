@@ -15,7 +15,6 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from dotenv import load_dotenv
-from requests.exceptions import RequestException
 
 from backfill.fetch_historical import (
     POLLUTION_HISTORY_START,
@@ -30,8 +29,8 @@ load_dotenv()
 # Rows per Hopsworks insert. A single multi-year insert is a long-lived upload
 # that tends to die on an unstable connection; batching keeps each write short
 # and means a failure costs one batch, not the whole run.
-INSERT_BATCH_ROWS = 5000
-MAX_INSERT_ATTEMPTS = 3
+INSERT_BATCH_ROWS = 2000
+MAX_INSERT_ATTEMPTS = 4
 
 # Courtesy pause between API calls (OpenWeather free tier allows 60/min).
 REQUEST_PAUSE_SECONDS = 1.0
@@ -154,10 +153,15 @@ def insert_batched(fg, df):
             try:
                 fg.insert(batch)
                 break
-            except RequestException as error:
+            except Exception as error:
+                # Deliberately broad. Hopsworks writes go through a Kafka
+                # producer, so a flaky connection surfaces as KafkaError
+                # (_MSG_TIMED_OUT on producer.flush()) rather than anything
+                # from requests -- catching RequestException alone let the
+                # first real multi-year run die on batch 3 of 10.
                 if attempt == MAX_INSERT_ATTEMPTS:
                     raise
-                wait_seconds = attempt * 5
+                wait_seconds = attempt * 10
                 print(f"    batch {batch_number} insert failed ({type(error).__name__}), retry in {wait_seconds}s")
                 time.sleep(wait_seconds)
         print(f"  inserted batch {batch_number}/{total_batches} ({len(batch)} rows)")

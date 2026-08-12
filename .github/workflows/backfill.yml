@@ -1,0 +1,51 @@
+name: Backfill
+
+# Manual only -- backfilling is a one-off (or occasional) bulk load, not
+# something to run on a schedule alongside the hourly feature pipeline.
+#
+# Runs here rather than locally because a multi-year backfill is a large,
+# long-lived upload: Hopsworks writes go through a Kafka producer, and on an
+# unstable home connection producer.flush() times out partway through. A
+# GitHub runner has a stable connection to Hopsworks.
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Start date (YYYY-MM-DD). OpenWeather's pollution archive begins 2020-11-27."
+        required: true
+        default: "2020-11-27"
+      end_date:
+        description: "End date (YYYY-MM-DD). Defaults to today if left blank."
+        required: false
+        default: ""
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run backfill
+        run: |
+          if [ -n "${{ inputs.end_date }}" ]; then
+            python -u -m backfill.backfill \
+              --start-date "${{ inputs.start_date }}" \
+              --end-date "${{ inputs.end_date }}"
+          else
+            python -u -m backfill.backfill --start-date "${{ inputs.start_date }}"
+          fi
+        env:
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT_NAME: ${{ secrets.HOPSWORKS_PROJECT_NAME }}
+          CITY_NAME: ${{ secrets.CITY_NAME }}
+          CITY_LAT: ${{ secrets.CITY_LAT }}
+          CITY_LON: ${{ secrets.CITY_LON }}

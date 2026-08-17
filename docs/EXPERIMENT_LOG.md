@@ -10,6 +10,261 @@ kept deliberately: they are the reason the surviving conclusions are trustworthy
 
 ---
 
+## Phase 0 — Setting up and building the system (2026-07-21 → 2026-08-09)
+
+### 0.1 Accounts, keys and local environment
+
+Two external services, both on free tiers:
+
+- **OpenWeather** — current weather, current air pollution, and *historical* air
+  pollution. Note the asymmetry that shaped the backfill design: OpenWeather's
+  **air-pollution history is free**, but its **weather history requires a paid
+  plan**. Historical weather therefore comes from **Open-Meteo's archive API**,
+  which is free and needs no key.
+- **Hopsworks** (project `AQI_Predictor4478`) — feature store *and* model
+  registry in one service, which is why it was chosen over stitching two tools
+  together.
+
+Local setup:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Secrets live in `.env` (git-ignored), with `.env.example` committed as the
+template so the required variables are documented without leaking values:
+
+```
+OPENWEATHER_API_KEY=      HOPSWORKS_API_KEY=       CITY_NAME=Lahore
+HOPSWORKS_PROJECT_NAME=   CITY_LAT=31.5497         CITY_LON=74.3436
+```
+
+The same six variables were added as **GitHub Actions Secrets** via the `gh`
+CLI, so the scheduled workflows could authenticate without any secret ever
+entering the repository. Verified afterwards: a full history scan found no
+committed keys, and `.gitignore` correctly excludes `.env`, `*.pem` and `*.pkl`.
+
+**City:** Lahore, Pakistan — chosen for genuinely severe and variable air
+quality, which makes the forecasting problem meaningful rather than a flat line.
+
+### 0.2 Windows-specific obstacles (worth recording — they cost real time)
+
+| Problem | Resolution |
+|---|---|
+| pip 22.3 silently corrupted large wheel downloads | Upgrade pip first, before anything else |
+| `hopsworks` → `pyjks` → `twofish` has no Windows wheel and needs a 64-bit C compiler | Install `hopsworks`/`pyjks` with `--no-deps`; `twofish` proved unnecessary for the JKS paths actually used |
+| Hopsworks client hardcodes `/tmp` in places | Pass `cert_folder=` for the main client; create `C:\tmp` for the Kafka cert path, which has no override |
+| Large uploads from this machine fail | Confirmed by testing: a 30-packet ping showed 0% loss, but a raw 10 MB upload to Cloudflare failed. Small requests fine, sustained transfers not. **Not a code bug** — route bulk operations through GitHub Actions |
+
+That last one recurs throughout the project and drove several later design
+decisions, including running the multi-year backfill on a GitHub runner.
+
+### 0.3 Feature pipeline and the EPA AQI calculation (`cd20179`, `f899b19`)
+
+OpenWeather returns raw pollutant **concentrations**, not an AQI, so the US EPA
+AQI is computed from scratch in `feature_pipeline/aqi.py`:
+
+1. Convert µg/m³ → ppb/ppm for the gases (`ppb = µg/m³ × 24.45 / molecular weight`
+   at 25 °C, 1 atm; CO additionally ppb → ppm).
+2. **Truncate** each concentration to the EPA's specified precision before
+   matching. This is easy to miss and it matters: the breakpoint tables have
+   gaps between buckets (PM10 runs 0–54 then 55–154), so an untruncated 54.5
+   matches *nothing* and returns no sub-index.
+3. Look up the piecewise-linear sub-index per pollutant.
+4. **Overall AQI = the worst sub-index**, and the pollutant producing it is
+   recorded as `dominant_pollutant`.
+
+The tables use the **2024-revised** PM2.5 breakpoints (Good ends at 9.0, not the
+obsolete 12.0).
+
+*Known approximation, carried forward deliberately:* EPA breakpoints are defined
+over averaging windows — 24h for PM, 8h for O3/CO, 1h for SO2/NO2 — but are
+applied here to instantaneous hourly readings. This makes the value an hourly
+proxy rather than official EPA AQI. Listed in open items to fix or disclose.
+
+### 0.4 Feature group v1 → v2 (`5f341d3`)
+
+The first feature group stored raw weather and pollutant values plus the computed
+AQI. Re-reading the brief showed it explicitly requires **time-based features
+(hour, day, month)** and **derived features such as AQI change rate**, so a v2 was
+created adding `hour`, `day`, `month` and `aqi_change_rate`.
+
+**v1 was left untouched rather than edited.** Feature groups are versioned
+precisely so history stays reproducible; rewriting one in place would invalidate
+anything trained against it.
+
+Feature group design: `primary_key=["city_name", "timestamp"]`, `event_time="timestamp"`,
+HUDI format. The composite key makes inserts idempotent — re-running a backfill
+upserts rather than duplicating, which later made recovery from a failed bulk load
+trivial.
+
+### 0.5 Historical backfill, first attempt (`6f18c13`)
+
+Merged two sources on the hour: OpenWeather air-pollution history + Open-Meteo
+weather archive. **90 days, ~2,065 rows.** This number is the origin of the data
+starvation diagnosed much later in Phase 2 — a single request was issued for the
+whole range, and nobody checked whether more history was available. It was: 5.7
+years.
+
+A dtype bug surfaced here and set a pattern: `pressure` arrived as a float, was
+stored as an int, and pandas inferred the column type from whatever the batch
+happened to contain. The same class of bug reappeared twice more (Phase 0.11 and
+Phase 2), each time because pandas infers dtypes per-batch while the feature
+group schema is fixed.
+
+### 0.6 Exploratory data analysis (`b87a2a7`, `notebooks/01_eda.ipynb`)
+
+Findings that shaped later modelling decisions:
+
+- **No nulls, no duplicate timestamps** — but ~5% of hours missing (107 of 2,172).
+  This directly motivated matching labels by *timestamp* rather than row position.
+- **Mean AQI ≈ 125** across the window — Lahore's air is never "clean" here.
+- **PM2.5 correlates 0.90 with AQI** — it is almost always the dominant pollutant.
+- **Weather features correlate weakly with AQI (≤0.14)** — an early warning that
+  the physical features might carry less signal than hoped, which Phase 3
+  eventually confirmed.
+- Clear daily cycle in AQI by hour.
+
+### 0.7 Target construction and the split (`3a9951a`)
+
+The single most important modelling decision. To forecast 72h ahead, each row
+needs the AQI value from exactly 72 hours later:
+
+```python
+future_timestamps = df["timestamp"] + pd.Timedelta(hours=horizon_hours)
+df[TARGET_COLUMN] = aqi_by_time.reindex(future_timestamps).values
+```
+
+Matched **by timestamp, not by shifting 72 row positions**. With ~5% of hours
+missing, a positional shift would silently pair a row with the wrong future value
+— a bug that produces no error and quietly corrupts every label.
+
+`time_based_split()` splits **chronologically**, never randomly. Shuffling
+time-series data lets the model evaluate on rows whose near-identical neighbours
+it trained on, which inflates scores meaninglessly.
+
+*(A subtler leak in this same function — training rows whose labels fall inside
+the test window — went unnoticed until the Phase 1 audit.)*
+
+### 0.8 Four models compared (`9e28cf3`, `2b5bce1`, `efc4702`, `f76bc6e`)
+
+The brief asks for a variety of approaches, from statistical to deep learning.
+All four were wired through one shared interface — `(X_train, y_train, X_test) → y_pred`
+— so they plug into a single comparison loop despite being entirely different
+libraries.
+
+| Model | Library | R² @72h | Note |
+|---|---|---|---|
+| Ridge | scikit-learn | −0.09 | Linear; needs feature scaling |
+| **Random Forest** | scikit-learn | **0.33** | **Winner at the time** |
+| Neural Net (MLP 32/16) | TensorFlow/Keras | −1.16 | Worst — far too little data |
+| ARIMA (2,1,2) | statsmodels | −0.27 | Ignores all features; uses only AQI's own past |
+
+**Interpretation at the time:** Random Forest's bounded predictions handled the
+train/test distribution shift more gracefully than Ridge or the neural net, both
+of which extrapolated badly. Three of four models scored *below zero* — worse than
+predicting the mean.
+
+This "fancier is not automatically better" result was treated as a genuine finding
+rather than something to hide. *(Phase 3 later reversed the conclusion entirely
+once there was 24× more data — see below.)*
+
+ARIMA needed a different data shape from the others: a single evenly-spaced
+series rather than independent rows, so `load_raw_aqi_series()` reindexes to a
+regular hourly grid and interpolates small gaps.
+
+### 0.9 Explainability, and a methodological catch (`806fe63`)
+
+SHAP (`TreeExplainer`) on the Random Forest produced
+`reports/shap_feature_importance.png`. It showed **`day` (day-of-month) dominating
+feature importance**, which looked spurious.
+
+Rather than assume, this was tested by ablation: removing `day` collapsed R² from
+0.33 to −0.03. At the time this was read as "`day` is genuinely important."
+
+**Phase 3 revised that reading.** The feature was load-bearing precisely *because*
+the model had learned little else — with only 3.4 months spanning months 4–7, it
+was memorising "late July looks like this" rather than learning pollution
+dynamics. Same measurement, correct interpretation only visible with more data.
+
+### 0.10 Diagnostics that justified daily retraining
+
+- **Persistence baseline: R² = −0.74** vs Random Forest 0.33 — at the time, strong
+  evidence the model added real value. *(This flipped completely in Phase 3 when
+  the test window widened from three summer weeks to a full year.)*
+- **Systematic over-prediction bias of ~8.6 AQI points.**
+- **Error grows with distance from the training cutoff**: RMSE 20.5 over the first
+  half of the test period vs 28.3 over the second.
+
+That last one is concrete evidence for *why* daily retraining matters — not just a
+checkbox from the brief. It also foreshadowed the regime-shift finding in Phase 3.
+
+### 0.11 Multi-horizon models and the Model Registry (`806fe63`)
+
+A single 72h number is a poor "3-day forecast", so `add_target()` and `register.py`
+were generalised to take `horizon_hours`, and `register_forecast_models.py` loops
+over `[24, 48, 72]`, registering three independent models.
+
+| Model | R² (at the time) |
+|---|---|
+| `aqi_random_forest_24h` | 0.47 |
+| `aqi_random_forest_48h` | 0.27 |
+| `aqi_random_forest_72h` | 0.33 |
+
+Near-term is easier than far-term, as expected.
+
+Registration trains **twice** on purpose: an "honest" model on the training split
+only, whose held-out metrics are what get registered, and a "final" model refit on
+all available data, which is the artifact actually deployed.
+
+**Registry gotcha, found by reading the `hsml` source:** `mr.get_model(name)`
+defaults to **version 1**, not the latest. Left unfixed, the dashboard would have
+pinned itself to the first model forever and silently ignored every daily retrain.
+`load_latest_model()` therefore fetches all versions and takes the maximum.
+
+### 0.12 Streamlit dashboard (`a22c317`, `b66c99f`)
+
+`app/app.py` loads the latest registered model per horizon plus the newest feature
+row, and renders: a hero card with current AQI, a day-by-day forecast chart
+(24/48/72h), a hazard alert banner, a SHAP expander and a model-version expander.
+
+Design decision worth noting: the dashboard uses the **official EPA/AirNow AQI
+colours** rather than a neutral palette. AQI colour-coding is a globally recognised
+convention like traffic lights; inventing a different scheme would be actively
+worse for users.
+
+Alerts key off `aqi_category()` in `feature_pipeline/aqi.py`, so the alert
+thresholds and the prediction scale are guaranteed to agree — they read from one
+table.
+
+### 0.13 Automation (`.github/workflows/`)
+
+- `feature_pipeline.yml` — hourly (`0 * * * *`)
+- `training_pipeline.yml` — daily (`0 2 * * *`)
+
+Both confirmed genuinely running, not merely committed: a scheduled hourly run
+fired unattended and added real rows, and manual `workflow_dispatch` runs of both
+succeeded. The three multi-horizon models were in fact registered *from* a GitHub
+runner, precisely because this machine's uploads were unreliable.
+
+### 0.14 Bugs fixed during the build
+
+| Bug | Cause | Fix |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'app.load_model'` (`8f91aa5`) | `streamlit run app/app.py` puts the script's own folder on `sys.path`, not the repo root | Explicit `sys.path.insert(0, repo_root)` — the identical fix the EDA notebook needed for the same reason under nbconvert |
+| App hung 30+ minutes on load (`8c406a2`, `b66c99f`) | `hopsworks.login()` has no timeout and relies on the OS socket default | Run it in a background thread with a client-side timeout and retry |
+| …and the first version of that fix silently didn't work | `with ThreadPoolExecutor() as ...` calls `shutdown(wait=True)` on exit, blocking until the hung thread finishes — defeating the timeout that had just fired | `shutdown(wait=False)`; stop waiting and retry |
+| ~40% of hourly runs failing (`e8a5477`) | Single-row inserts: when OpenWeather returned a whole number (`"no": 0`), pandas typed the column `int64`, clashing with the `double` schema locked in by the multi-row backfill | Explicit `float()` on every double column — third instance of the pandas-dtype-inference class of bug |
+| Transient `RemoteDisconnected` in a workflow (`933dbc1`, PR #1) | GitHub runner ↔ Hopsworks network blip, not a config error | Retry with backoff around `fg.insert()`. Fixed using **GitHub Copilot's cloud agent** — this repo has been touched by two different AI tools |
+
+**State at the end of Phase 0:** every numbered requirement in the brief was
+implemented and the system ran end to end. That appearance of completeness is
+exactly what the Phase 1 audit set out to test.
+
+---
+
 ## Phase 1 — Audit (2026-08-12)
 
 Reviewed the repository against the project brief as a strict evaluator would.

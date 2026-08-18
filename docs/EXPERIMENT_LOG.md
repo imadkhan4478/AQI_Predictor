@@ -492,6 +492,112 @@ over persistence, rather than guessing at another fix.
 
 ---
 
+## Phase 4 — Matching the evaluation to the deployment (2026-08-17 → 18)
+
+### The evaluation was measuring a system that does not exist
+
+Every experiment to this point trained once on 2020–2025 and then predicted up
+to **14 months** into a frozen future. Production does nothing of the sort: the
+training pipeline retrains **daily** and the model only ever forecasts 24–72h
+ahead. It always has last week's data.
+
+Against a pollution level that has fallen ~58% since 2020, that setup was mostly
+scoring the model on its inability to predict a multi-year trend — a task it
+never faces. The tell came from the shrinkage experiment, where the blend weight
+chosen on validation (`w* = 0.90–1.00`, "trust the model") was contradicted by
+the test slice. Validation and test disagreeing is the signature of
+non-stationarity, not of a bad model.
+
+### Walk-forward evaluation
+
+Retrain at successive monthly origins, score only the following month, roll
+forward. 12 retrains, ~7,578 predictions per horizon, persistence scored on
+identical rows.
+
+| Horizon | Persistence | HistGB | RandomForest | Ridge |
+|---|---|---|---|---|
+| 24h | **0.814** | 0.780 | 0.759 | 0.735 |
+| 48h | **0.709** | 0.643 | 0.598 | 0.605 |
+| 72h | **0.628** | 0.613 | 0.579 | 0.574 |
+
+Most of the gap closed; at 72h the model came within 0.015. Persistence still won
+everywhere.
+
+**The model ranking reversed.** Under the single frozen split, Ridge beat the
+tree models at every horizon. Under walk-forward, Ridge is the *worst* and
+gradient boosting wins everywhere. Ridge only looked good because a frozen model
+cannot track a falling trend and linear models extrapolate; once retraining is
+frequent, that advantage disappears and flexible models win on their merits.
+
+*This is the single most useful methodological finding in the project: changing
+the evaluation changed which model wins. An evaluation that does not match
+deployment selects the wrong model.*
+
+### Blending with persistence — what finally worked
+
+Persistence and the model are both decent and make partly different errors, so a
+weighted average should beat either. Weight chosen from the **previous month
+only**, never the month being scored.
+
+| Horizon | Persistence | Model alone | Blend (adaptive w) | Blend (fixed 50/50) |
+|---|---|---|---|---|
+| 24h | 0.814 | 0.780 | **0.831** | 0.829 |
+| 48h | 0.709 | 0.643 | **0.748** | 0.745 |
+| 72h | 0.628 | 0.613 | 0.706 | **0.710** |
+
+**Beats persistence at all three horizons.** A fixed 50/50 split performs
+essentially identically to the adaptive weight, which is reassuring — the gain is
+structural, not the product of weight tuning.
+
+The blend also simplifies algebraically. With `model = now + delta`:
+
+```
+blend = (1-w)·now + w·(now + delta) = now + w·delta
+```
+
+So deployment needs only a delta-predicting model plus a scalar `w` — no separate
+persistence branch at inference.
+
+### Hypotheses tested, in order
+
+| # | Hypothesis | Outcome |
+|---|---|---|
+| 1 | More data | ✅ 0.34 → 0.66, exposed the real problem |
+| 2 | Delta target alone | ❌ No effect under the frozen split |
+| 3 | Per-horizon model choice | ✅ Real, but the winner depends on the evaluation |
+| 4 | Trailing training window | ~ Marginal (0.736 vs 0.720) |
+| 5 | Forecast weather features | ❌ Worse at every horizon |
+| 6 | Walk-forward evaluation | ✅ Closed most of the gap |
+| 7 | Blend with persistence | ✅ **Beat persistence everywhere** |
+
+Five of seven failed or were marginal. Recording them matters: without the
+failures, the two that worked look like lucky guesses rather than the result of
+elimination.
+
+### A self-inflicted production incident (2026-08-18)
+
+Hourly runs began failing roughly a quarter of the time with
+`FlightUnavailableError: Socket closed`.
+
+**Cause:** the hourly job computed `aqi_change_rate` by calling
+`read_features_df()` and filtering in pandas — downloading the whole feature
+group to read one value. At 2k rows that was wasteful; after backfilling to 49k
+it dropped the Arrow Flight transfer mid-stream. The audit had explicitly flagged
+this ("full-table scan per hourly run, O(n) growth, will degrade") and it was not
+fixed before making n 24× larger.
+
+**First fix (`af6cc34`) did not work.** Pushing the filter down to Hopsworks
+still failed all three retries on the runner, ~2.5 minutes each — filter pushdown
+on this HUDI group does not avoid the scan.
+
+**Second fix (`8e2627b`) worked.** The hourly job should not need the feature
+store to be *queryable* in order to *write* to it. The previous hour's AQI is now
+recomputed from OpenWeather's pollution archive, which the project already
+depends on; AQI is deterministic given the concentrations, so the value is
+identical. Verified on a runner: success, 1 second, no Hopsworks read.
+
+---
+
 ## Open items
 
 - Apply the purge/embargo fix to `time_based_split` in the repo

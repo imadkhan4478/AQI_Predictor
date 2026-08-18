@@ -9,8 +9,8 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from dotenv import load_dotenv
 
 from feature_pipeline.aqi import compute_aqi
-from feature_pipeline.fetch import get_pollution, get_weather
-from feature_pipeline.hopsworks_store import get_aqi_at, get_feature_group
+from feature_pipeline.fetch import get_pollution, get_pollution_at, get_weather
+from feature_pipeline.hopsworks_store import get_feature_group
 
 load_dotenv()
 
@@ -66,6 +66,17 @@ def build_feature_row(city_name, weather, pollution, previous_aqi=None):
     }
 
 
+def get_previous_hour_aqi(lat, lon, api_key, observed_at):
+    """AQI one hour before `observed_at`, recomputed from the pollution archive.
+    Returns None if that hour isn't published yet, in which case the caller
+    records a change rate of 0.0."""
+    components = get_pollution_at(lat, lon, api_key, observed_at - timedelta(hours=1))
+    if components is None:
+        return None
+    aqi, _, _ = compute_aqi(components)
+    return aqi
+
+
 def run():
     api_key = os.environ["OPENWEATHER_API_KEY"]
     lat = os.environ["CITY_LAT"]
@@ -76,13 +87,21 @@ def run():
     pollution = get_pollution(lat, lon, api_key)
 
     # Change rate is defined against the immediately preceding hour, matching
-    # the backfill. If that hour is missing (a skipped run), we record 0.0
-    # rather than a delta spanning an arbitrary gap, which would hand the
-    # model a feature that means something different than it did in training.
+    # the backfill. If that hour is unavailable we record 0.0 rather than a
+    # delta spanning an arbitrary gap, which would hand the model a feature
+    # meaning something different than it did in training.
+    #
+    # The previous hour is recomputed from OpenWeather's pollution archive
+    # rather than read back from the feature store. Reading it from Hopsworks
+    # meant an Arrow Flight query on every hourly run, which failed outright
+    # once the feature group reached 49k rows -- and the hourly job should not
+    # depend on the feature store being queryable just to write to it. AQI is
+    # a deterministic function of the concentrations, so recomputing gives the
+    # identical value.
     observed_at = datetime.fromtimestamp(weather["dt"], tz=timezone.utc).replace(
         minute=0, second=0, microsecond=0
     )
-    previous_aqi = get_aqi_at(city_name, observed_at - timedelta(hours=1))
+    previous_aqi = get_previous_hour_aqi(lat, lon, api_key, observed_at)
     row = build_feature_row(city_name, weather, pollution, previous_aqi)
     df = pd.DataFrame([row])
 

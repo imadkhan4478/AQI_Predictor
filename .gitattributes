@@ -1,0 +1,15 @@
+# Store and check out every text file with LF endings, regardless of platform.
+#
+# Without this, files authored on Windows arrive as CRLF while the Linux GitHub
+# runners write LF, so the same file churns back and forth between commits and
+# `git add` warns on every text file it touches. Pinning the working tree to LF
+# as well as the index means no conversion happens in either direction.
+* text=auto eol=lf
+
+# Never normalise binaries -- rewriting bytes inside these corrupts them.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.pkl binary
+*.h5 binary
+*.keras binary

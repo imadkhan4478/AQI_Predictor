@@ -152,6 +152,12 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows; use source .venv/bin/activate elsewhere
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+
+# Optional: the TensorFlow entry in the model comparison. Second step on purpose
+# -- hopsworks declares protobuf<5 and tensorflow needs protobuf>=6.31, so pip
+# cannot resolve both at once. Expect an "incompatible" warning about hopsworks;
+# the project has always run in that state. Nothing deployed needs it.
+pip install -r requirements-deep.txt
 ```
 
 Copy `.env.example` to `.env` and fill in the six variables (OpenWeather key, Hopsworks

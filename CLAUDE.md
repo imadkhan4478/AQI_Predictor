@@ -59,6 +59,11 @@ the end of the requirements PDF, not on model score alone.
   infers dtypes per batch and the schema is fixed.
 - `requirements.txt` is pinned. Every number in the log was measured against
   those versions.
+- **TensorFlow is in `requirements-deep.txt`, not `requirements.txt`.** hopsworks
+  declares `protobuf<5`, tensorflow needs `protobuf>=6.31`, and pip refuses the
+  pair. Nothing deployed needs TensorFlow; `train.py` imports it optionally and
+  announces the skip. Do not "fix" this by merging the files — CI will stop
+  installing.
 
 ## Failure mode to watch for
 

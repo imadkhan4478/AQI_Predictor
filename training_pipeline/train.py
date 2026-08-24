@@ -17,8 +17,16 @@ from training_pipeline.baseline_models import (
     predict_persistence,
 )
 from training_pipeline.data import DELTA_COLUMN, load_training_data, time_based_split
-from training_pipeline.deep_model import train_and_predict as train_predict_nn
 from training_pipeline.evaluate import evaluate
+
+# TensorFlow lives in requirements-deep.txt, not requirements.txt: it cannot be
+# resolved alongside hopsworks in one pip pass (see that file). Imported
+# optionally so the comparison still runs -- minus the neural net, and saying so
+# -- in the core environment CI and the deployed system use.
+try:
+    from training_pipeline.deep_model import train_and_predict as train_predict_nn
+except ImportError:  # pragma: no cover - depends on the installed environment
+    train_predict_nn = None
 
 load_dotenv()
 
@@ -51,8 +59,13 @@ def run(horizons=HORIZONS_HOURS):
             "Ridge": _sklearn(build_ridge),
             "RandomForest": _sklearn(build_random_forest),
             "GradientBoosting": _sklearn(build_gradient_boosting),
-            "NeuralNet": train_predict_nn,
         }
+        if train_predict_nn is not None:
+            candidates["NeuralNet"] = train_predict_nn
+        else:
+            # Announced rather than silently omitted: a comparison table with a
+            # row quietly missing is worse than one that says why.
+            print("NeuralNet skipped -- TensorFlow not installed (pip install -r requirements-deep.txt)")
 
         results = {
             "Persistence": evaluate(truth, predict_persistence(current_aqi.loc[X_test.index]))

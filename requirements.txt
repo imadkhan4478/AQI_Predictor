@@ -16,8 +16,11 @@ confluent-kafka==2.15.0
 # Modeling
 scikit-learn==1.9.0
 joblib==1.5.3
-tensorflow==2.21.0
 statsmodels==0.14.6
+# TensorFlow is NOT here -- see requirements-deep.txt. hopsworks 5.0.3 declares
+# protobuf<5 while tensorflow 2.21 requires protobuf>=6.31, so pip cannot
+# resolve both in one pass. Nothing in the deployed system needs TensorFlow:
+# it is used only by the neural-net entry in the model comparison.
 
 # Explainability
 shap==0.51.0

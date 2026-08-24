@@ -723,6 +723,42 @@ deployed model weekly (and on demand) and commits it back. Weekly rather than
 daily because it is a binary file and daily retrains would add a blob to the
 history for a picture that barely moves.
 
+### Pinning immediately failed CI, and that was the point
+
+The first push with a pinned `requirements.txt` failed the new Tests workflow in
+20 seconds:
+
+```
+hopsworks 5.0.3   depends on protobuf<5.0.0 and >=4.25.4
+tensorflow 2.21.0 depends on protobuf<8.0.0 and >=6.31.1
+```
+
+Unsatisfiable. The local venv only holds both because Phase 0.2 installed
+`hopsworks --no-deps` to get around the Windows compiler problem, so pip never
+enforced that bound here.
+
+The interesting part is what pip had been doing on the runner *before* the pins.
+Resolving `hopsworks==5.0.3` with an unpinned `tensorflow` selects
+**tensorflow 2.19.1 and numpy 2.1.3** — while local development has been on
+2.21.0 and 2.4.6 throughout. The scheduled jobs were never running the stack any
+result in this log was measured on. Nothing failed, nothing warned; the versions
+simply differed. Pinning did not create this problem, it made the pre-existing
+one impossible to ignore, which is the entire argument for pinning.
+
+**Fix:** TensorFlow moved to `requirements-deep.txt`, installed as a second step.
+Nothing deployed needs it — not the hourly feature job, the daily registration
+job, the API, the dashboard, or the tests. Only the neural-net row of the model
+comparison does, and `train.py` now imports it optionally and prints that the row
+was skipped rather than omitting it silently.
+
+Two things worth stating plainly in the report:
+
+- hopsworks' `protobuf<5` bound is over-tight; this project has run against
+  protobuf 7.x throughout. Declaring the conflict and working around it
+  deliberately is different from not knowing it exists.
+- A dependency conflict that only appears once you pin is a conflict you already
+  had.
+
 ---
 
 ## Open items

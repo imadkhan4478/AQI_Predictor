@@ -3,6 +3,14 @@
 import tensorflow as tf
 from sklearn.preprocessing import StandardScaler
 
+# Same seed as the sklearn models, set through Keras' one-call helper so
+# Python's `random`, NumPy and TensorFlow are all covered -- seeding only
+# tf.random leaves weight initialisers and the shuffle order free to vary.
+# Without this, two runs of the comparison in train.py disagree on this row by
+# more than the gaps it is meant to measure, and there is no way to tell a real
+# improvement from noise.
+RANDOM_SEED = 42
+
 
 def build_model(n_features):
     model = tf.keras.Sequential(
@@ -18,6 +26,8 @@ def build_model(n_features):
 
 
 def train_and_predict(X_train, y_train, X_test):
+    tf.keras.utils.set_random_seed(RANDOM_SEED)
+
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)

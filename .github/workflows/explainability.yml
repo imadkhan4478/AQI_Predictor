@@ -1,0 +1,48 @@
+name: Explainability
+
+# Regenerates reports/shap_feature_importance.png from the model that is
+# actually deployed, and commits it back.
+#
+# Separate from the daily training job on purpose: the plot is a binary file, so
+# committing it on every retrain would add a daily binary blob to the history for
+# a picture that barely moves. Weekly, plus a button to press after a change that
+# should visibly alter feature importance.
+on:
+  schedule:
+    - cron: "30 3 * * 0" # Sundays, 03:30 UTC -- after the nightly retrain
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to commit the regenerated plot back
+
+jobs:
+  explain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Regenerate SHAP feature importance
+        run: python -m training_pipeline.explain
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT_NAME: ${{ secrets.HOPSWORKS_PROJECT_NAME }}
+
+      - name: Commit the plot if it changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/shap_feature_importance.png
+          if git diff --quiet --cached; then
+            echo "Feature importance unchanged; nothing to commit."
+          else
+            git commit -m "Regenerate SHAP feature importance from the deployed model"
+            git push
+          fi

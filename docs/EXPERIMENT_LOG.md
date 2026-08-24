@@ -598,12 +598,150 @@ identical. Verified on a runner: success, 1 second, no Hopsworks read.
 
 ---
 
+## Phase 5 — The serving path had silently diverged (2026-08-24)
+
+Phases 3–4 rewrote the training side: delta target, lag/rolling features,
+HistGradientBoosting, the anchored blend, a new registered model name
+(`aqi_forecast_{h}h`). Nothing in `app/` was touched. Checking the dashboard
+against the models now being registered found **three separate training/serving
+skews, all introduced by one commit that only edited the training side**:
+
+| Skew | Consequence |
+|---|---|
+| `app.py` loaded `aqi_random_forest_{h}h` | Served a model the daily job no longer retrains — the app would have quietly drifted further out of date every day while looking healthy |
+| `load_latest_row()` applied `add_time_features` but not `add_lag_features` | `latest_row[FEATURE_COLUMNS]` cannot resolve `aqi_lag_*` / `aqi_rmean_*` — hard failure on load, the *cheapest* of the three to discover |
+| The prediction was rendered as an absolute AQI | The models now output a **change**. A predicted delta of `−4` would have been displayed as "AQI 4 — Good" for a city sitting at 170 |
+
+The middle one crashes and gets noticed. The other two produce plausible
+numbers, which is worse. Both belong to the same family as Phase 1's Finding 1
+and Phase 2's frozen materialization: **the failure mode of this project is
+consistently a green pipeline that is quietly serving nothing, or serving
+garbage that looks like a number.**
+
+### Fixes
+
+- `app/load_model.py` returns the blend weight alongside the model, read from
+  `blend.json` next to the artifact (registry metrics as fallback). It returns
+  `None` rather than defaulting to `w=1.0`: a silent default would deploy the
+  unshrunk model, which loses to persistence at every horizon, and it would
+  look exactly like a working forecast. The dashboard withholds that horizon
+  and says why instead.
+- `app/app.py` builds the live row through the *same* `add_time_features` +
+  `add_lag_features` functions the training pipeline uses, rather than
+  recomputing features by hand — the only way the two stay in step. Forecasts
+  now go through `current_aqi + w × predicted_delta`, clamped to 0–500.
+- `training_pipeline/explain.py` was explaining a Random Forest predicting
+  absolute AQI — a model that no longer runs. Now explains the deployed
+  gradient-boosting model on the delta target. It had also been broken since
+  Phase 3 by an unnoticed signature change (`load_training_data` returns four
+  values, not three) — nothing imports it, so nothing caught it.
+
+### Housekeeping done at the same time
+
+- `requirements.txt` pinned to the versions every number in this log was
+  measured against. Unpinned, a minor upgrade on a GitHub runner can change
+  model behaviour with no commit to point at.
+- TensorFlow model seeded via `tf.keras.utils.set_random_seed` (Python, NumPy
+  and TF in one call — seeding `tf.random` alone leaves initialisers free).
+  Without it, two runs of the comparison disagreed by more than the gaps it is
+  meant to measure.
+- The EPA averaging-window approximation is now disclosed in `aqi.py`'s module
+  docstring, with its actual consequence stated: applying 24h PM breakpoints to
+  hourly readings makes this proxy *more volatile* than official AQI — higher
+  during a spike, lower after it. Not fixed, deliberately: every model result
+  above was measured against this definition.
+- README rewritten. It had claimed "Project scaffolding in progress" since day
+  one and described Random Forest as the model.
+
+### Re-reading the brief against the repo
+
+Checked every line of `Project Guidelines & Requirements.pdf` against what
+exists, rather than against what the log says was built. Two genuine gaps:
+
+1. **"Use Streamlit/Gradio *and* Flask/FastApi for the web app."** Only Streamlit
+   existed. `fastapi` and `uvicorn` had been sitting in `requirements.txt` since
+   the first commit with nothing importing them — the requirement had been read,
+   provisioned for, and then forgotten.
+2. **"A detailed report documenting everything you managed to achieve"** — one of
+   four graded Final Submissions, still unwritten. This log is raw material for
+   it, not a substitute.
+
+Also worth recording as a process note: the requirement to include time features
+`(hour, day, month)` is satisfied by *storing* them in the feature group, while
+`day` and `month` are excluded from the model's feature set because they
+measurably hurt (Phase 2). That is a defensible reading, but only if the report
+states it explicitly — otherwise it looks like a missed requirement.
+
+### FastAPI service, and one serving path (`serving/forecast.py`)
+
+The obvious way to satisfy requirement 11 would be a second copy of the feature
+assembly and blend logic behind an HTTP handler. That is precisely the mistake
+this phase started by fixing, so the forecast moved into `serving/forecast.py`
+instead, and both front ends became clients of it:
+
+- `api/main.py` — `/health`, `/current`, `/forecast`, `/models`, with OpenAPI
+  docs generated from typed response models.
+- `app/app.py` — presentation only. Reads the API when `AQI_API_URL` is set,
+  otherwise calls the same serving functions in-process. One process when
+  running locally, two when deployed, identical numbers either way.
+
+Decisions in the API worth keeping:
+
+- **Models load lazily, not at startup.** A startup hook means a transient
+  Hopsworks outage stops the service from booting at all, rather than degrading
+  one retryable request.
+- **`/health` never touches Hopsworks.** It reports cached state. A health check
+  that can trigger a registry login becomes the load it is meant to detect.
+- **Missing data is 503, not 500.** The service is fine; the data is not there
+  yet, and the client should retry.
+- **The blend weight is in the response.** A consumer cannot interpret the
+  number without knowing how much of it is model and how much is persistence.
+
+### Tests grew from 30 to 57, and now run in CI
+
+The 30 existing tests all covered `aqi.py`. Nothing covered the arithmetic that
+turns a predicted delta into a displayed AQI — the exact thing that had been
+silently wrong. Added `tests/test_forecast.py` (blend arithmetic, clamping,
+withheld horizons, alert selection, schema-drift detection) and
+`tests/test_api.py` (routing, status codes, response contract). Neither needs
+credentials; the store and registry are substituted.
+
+`.github/workflows/tests.yml` runs pyflakes and pytest on every push. Until now
+the only CI was two scheduled jobs whose failures surface hours later.
+
+Two bugs the new tests found immediately:
+
+- Schema drift produced a bare `KeyError: ['pm10', 'humidity']` from inside
+  pandas. It now raises a `ForecastUnavailable` naming the missing columns.
+- `add_lag_features` called `DataFrame.interpolate` on a frame containing text
+  columns. pandas already skips them, but it is deprecated and scheduled to
+  **start raising** — a pandas upgrade would have broken training with no code
+  change. Restricted to numeric columns; behaviour identical today.
+
+`.github/workflows/explainability.yml` regenerates the SHAP plot from the
+deployed model weekly (and on demand) and commits it back. Weekly rather than
+daily because it is a binary file and daily retrains would add a blob to the
+history for a picture that barely moves.
+
+---
+
 ## Open items
 
-- Apply the purge/embargo fix to `time_based_split` in the repo
-- Replace Random Forest with the per-horizon winner; retrain and re-register
-- Add the persistence baseline to `train.py` and persist comparison results
-- Pin `requirements.txt`; seed the TensorFlow model
-- Fix or explicitly disclose the EPA averaging-window approximation
-- Rewrite README (still says "Project scaffolding in progress")
 - Assemble and structure the final report from this log
+- Run the explainability workflow once to replace the committed Random Forest
+  SHAP plot
+- Consider rolling concentrations to the EPA's proper averaging windows as a
+  second AQI column, so the approximation can be measured rather than only
+  disclosed
+- Refit the blend weight on a schedule rather than only at registration
+
+### Resolved
+
+- ~~Apply the purge/embargo fix to `time_based_split`~~ — Phase 3
+- ~~Replace Random Forest with the per-horizon winner~~ — Phase 4
+- ~~Add the persistence baseline to `train.py` and persist comparison results~~
+  — Phase 4, written to `reports/model_comparison.json`
+- ~~Pin `requirements.txt`; seed the TensorFlow model~~ — Phase 5
+- ~~Fix or explicitly disclose the EPA averaging-window approximation~~ —
+  disclosed, Phase 5
+- ~~Rewrite README~~ — Phase 5

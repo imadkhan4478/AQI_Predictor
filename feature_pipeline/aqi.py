@@ -1,4 +1,27 @@
-"""Compute US EPA Air Quality Index from pollutant concentrations."""
+"""Compute US EPA Air Quality Index from pollutant concentrations.
+
+KNOWN APPROXIMATION -- read before quoting these numbers as "EPA AQI".
+
+The EPA defines each breakpoint table over an averaging window, not over an
+instantaneous reading: 24 hours for PM2.5 and PM10, 8 hours for O3 and CO, and
+1 hour for SO2 and NO2. This module applies those tables directly to the single
+hourly reading OpenWeather publishes, which is the only thing available at
+hourly cadence from a free source.
+
+The consequence is specific rather than vague: because PM is averaged over a
+day officially and over one hour here, short pollution spikes register at full
+strength instead of being smoothed, so this value is *more volatile* than
+official AQI and reads higher during a spike and lower after it. It tracks
+official AQI closely on flat days and diverges most on sharply changing ones.
+
+Treat the output as an hourly AQI proxy computed with EPA breakpoints -- correct
+and consistent as a target for forecasting, which is what the project needs,
+but not a figure to publish as the official EPA AQI for a given hour. Rolling
+the concentrations to their proper windows before scoring would fix this; it is
+recorded in docs/EXPERIMENT_LOG.md rather than done, because every model result
+in that log was measured against this definition and changing it silently would
+invalidate the comparisons.
+"""
 
 import math
 

@@ -1,33 +1,40 @@
+# Pinned to the versions this project was developed and evaluated against, so a
+# GitHub runner installs the same stack as the local venv. Unpinned, a silent
+# minor upgrade on the daily job can change model behaviour with no commit to
+# point at -- and every measurement in docs/EXPERIMENT_LOG.md was taken here.
+
 # Core
-python-dotenv
-requests
-pandas
-numpy
+python-dotenv==1.2.2
+requests==2.34.2
+pandas==2.3.3
+numpy==2.4.6
 
 # Feature store / model registry
-hopsworks
-confluent-kafka
+hopsworks==5.0.3
+confluent-kafka==2.15.0
 
 # Modeling
-scikit-learn
-tensorflow
-statsmodels
+scikit-learn==1.9.0
+joblib==1.5.3
+tensorflow==2.21.0
+statsmodels==0.14.6
 
 # Explainability
-shap
+shap==0.51.0
 
 # Web app
-streamlit
-plotly
-fastapi
-uvicorn
+streamlit==1.60.0
+plotly==6.9.0
+fastapi==0.140.0
+uvicorn==0.51.0
 
 # Testing
-pytest
+pytest==9.1.1
+httpx==0.28.1   # required by fastapi.testclient
 
 # EDA / plotting
-matplotlib
-seaborn
-jupyter
-nbconvert
-ipykernel
+matplotlib==3.11.1
+seaborn==0.13.2
+jupyter==1.1.1
+nbconvert==7.17.1
+ipykernel==7.3.0

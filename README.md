@@ -16,11 +16,12 @@ persistence scored on exactly the same rows.
 
 | Horizon | Persistence baseline | Model alone | **Deployed blend** |
 |---|---|---|---|
-| 24h | 0.814 | 0.780 | **0.831** |
+| 24h | 0.814 | 0.780 | **0.832** |
 | 48h | 0.709 | 0.643 | **0.748** |
-| 72h | 0.628 | 0.613 | **0.706** |
+| 72h | 0.628 | 0.613 | **0.715** |
 
-R² on held-out months. Persistence — "AQI in H hours = AQI now" — is a genuinely
+R² on held-out months, as measured by the daily training job against the live
+49k-row feature group. Persistence — "AQI in H hours = AQI now" — is a genuinely
 strong baseline for air quality, and no standalone model tried here beat it. The
 deployed forecast blends the two.
 

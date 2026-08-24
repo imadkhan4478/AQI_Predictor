@@ -68,33 +68,69 @@ def _read_blend_weight(local_dir, metrics):
     """
     blend_path = os.path.join(local_dir, "blend.json")
     if os.path.exists(blend_path):
-        with open(blend_path, encoding="utf-8") as handle:
-            weight = json.load(handle).get("blend_weight")
+        try:
+            with open(blend_path, encoding="utf-8") as handle:
+                weight = json.load(handle).get("blend_weight")
             if weight is not None:
                 return float(weight)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as error:
+            # A truncated or malformed blend.json is exactly what a failed
+            # upload leaves behind, so it must not raise here. Fall through to
+            # the registry metric, and ultimately to None -- a withheld horizon
+            # the dashboard reports, rather than a crash on load.
+            print(
+                f"Ignoring unreadable {blend_path} ({type(error).__name__}); "
+                "falling back to registry metrics.",
+                flush=True,
+            )
 
     weight = (metrics or {}).get("blend_weight")
     return None if weight is None else float(weight)
 
 
 def load_latest_model(model_name):
-    """Fetch the highest-version copy of a registered model.
+    """Fetch the newest *usable* version of a registered model.
 
     Returns (model, version, metrics, blend_weight). The model predicts the
     *change* in AQI, not its level, so blend_weight is not optional
     bookkeeping -- without it the caller cannot turn the output into a forecast.
 
+    Walks versions from highest downwards instead of trusting the highest,
+    because a registry write can fail partway through and leave a version whose
+    metadata row exists but whose files do not. That happened for real: an
+    upload returned HTTP 500 from Hopsworks' filesystem metadata layer after
+    model.pkl had landed but before the schema did. Serving last week's intact
+    model is correct behaviour; refusing to start because the newest version is
+    half-written is not.
+
     NOTE: get_model()'s version=None default actually means version 1, not
-    "latest" -- so once daily retraining is producing new versions, we must pick
-    the max ourselves.
+    "latest" -- so once daily retraining is producing new versions, the version
+    must be chosen explicitly.
     """
     project = _connect()
     mr = project.get_model_registry()
 
-    versions = mr.get_models(model_name)
-    latest = max(versions, key=lambda m: m.version)
+    versions = sorted(mr.get_models(model_name), key=lambda m: m.version, reverse=True)
+    if not versions:
+        raise LookupError(f"No versions of model {model_name!r} are registered")
 
-    local_dir = latest.download()
-    model = joblib.load(os.path.join(local_dir, "model.pkl"))
-    metrics = latest.training_metrics
-    return model, latest.version, metrics, _read_blend_weight(local_dir, metrics)
+    failures = []
+    for candidate in versions:
+        try:
+            local_dir = candidate.download()
+            model = joblib.load(os.path.join(local_dir, "model.pkl"))
+        except Exception as error:
+            failures.append(f"v{candidate.version}: {type(error).__name__}: {error}")
+            print(
+                f"Skipping {model_name} v{candidate.version} -- artifact could not be "
+                f"loaded ({type(error).__name__}). Trying the previous version.",
+                flush=True,
+            )
+            continue
+
+        metrics = candidate.training_metrics
+        return model, candidate.version, metrics, _read_blend_weight(local_dir, metrics)
+
+    raise LookupError(
+        f"No usable version of {model_name!r} could be loaded. Attempts: " + "; ".join(failures)
+    )

@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 
 import hopsworks
 import joblib
@@ -42,6 +43,20 @@ BLEND_WEIGHTS = np.linspace(0.0, 1.0, 21)
 # keeping the daily CI job to a few minutes.
 EVALUATION_ORIGINS = 12
 MIN_TRAIN_ROWS = 2000
+
+# The registry write is retried like every other Hopsworks call in this project.
+# It was the one that wasn't, and it is where the daily job broke: uploading the
+# 72h artifact returned HTTP 500 / errorCode 110043 from Hopsworks' own
+# filesystem metadata layer --
+#
+#   com.mysql.clusterj.ClusterJDatastoreException: code 626, Tuple did not exist
+#     at org.apache.hadoop.hdfs.server.namenode.FSDirDeleteOp
+#
+# -- after model.pkl and blend.json had already uploaded, failing on
+# input_example.json. Server-side race in a delete, not a client error: the same
+# code path had succeeded for the 24h and 48h models minutes earlier in the same
+# run. Nothing to fix locally; the correct response is to try again.
+MAX_REGISTER_ATTEMPTS = 3
 
 
 def walk_forward_evaluate(X, y_delta, timestamps, current_aqi, horizon_hours):
@@ -140,19 +155,40 @@ def run(horizon_hours=FORECAST_HORIZON_HOURS):
             cert_folder=os.path.join(tempfile.gettempdir(), "hopsworks_certs"),
         )
         mr = project.get_model_registry()
-        registered = mr.python.create_model(
-            name=model_name,
-            metrics=metrics,
-            description=(
-                f"Predicts the CHANGE in AQI {horizon_hours}h ahead; the forecast is "
-                f"current_aqi + {blend_weight:.2f} * predicted_delta. "
-                "HistGradientBoosting, selected per horizon under walk-forward evaluation. "
-                f"Held-out R2={metrics['R2']:.3f} vs persistence R2={baseline['R2']:.3f}."
-            ),
-            input_example=X.head(1),
+        description = (
+            f"Predicts the CHANGE in AQI {horizon_hours}h ahead; the forecast is "
+            f"current_aqi + {blend_weight:.2f} * predicted_delta. "
+            "HistGradientBoosting, selected per horizon under walk-forward evaluation. "
+            f"Held-out R2={metrics['R2']:.3f} vs persistence R2={baseline['R2']:.3f}."
         )
-        registered.save(model_dir)
-        print(f"  registered '{model_name}' version {registered.version}")
+
+        # create_model and save() are retried together. Retrying save() alone
+        # would reuse a version whose upload is already half-written; a fresh
+        # create_model takes the next version number, so each attempt starts
+        # clean. A failed attempt can leave an incomplete version behind, which
+        # is why app/load_model.py walks versions downwards until one loads
+        # rather than trusting the highest to be intact.
+        for attempt in range(1, MAX_REGISTER_ATTEMPTS + 1):
+            try:
+                registered = mr.python.create_model(
+                    name=model_name,
+                    metrics=metrics,
+                    description=description,
+                    input_example=X.head(1),
+                )
+                registered.save(model_dir)
+                print(f"  registered '{model_name}' version {registered.version}")
+                break
+            except Exception as error:  # hsml surfaces server faults as RestAPIError and OSError alike
+                if attempt == MAX_REGISTER_ATTEMPTS:
+                    raise
+                wait_seconds = attempt * 15
+                print(
+                    f"  registry write failed ({type(error).__name__}), "
+                    f"attempt {attempt}/{MAX_REGISTER_ATTEMPTS}. Retrying in {wait_seconds}s...",
+                    flush=True,
+                )
+                time.sleep(wait_seconds)
     finally:
         shutil.rmtree(model_dir, ignore_errors=True)
 

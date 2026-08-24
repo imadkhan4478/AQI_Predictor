@@ -759,10 +759,63 @@ Two things worth stating plainly in the report:
 - A dependency conflict that only appears once you pin is a conflict you already
   had.
 
+### First production run of the reworked models (2026-08-24, run #20)
+
+The blend deployed. Measured on the live 49k-row feature group by the daily job
+itself, not in a notebook:
+
+| Horizon | Blend R² | Persistence R² | Blend weight | Registered |
+|---|---|---|---|---|
+| 24h | **0.832** | 0.814 | 0.35 | v2 |
+| 48h | **0.748** | 0.709 | 0.35 | v1 |
+| 72h | **0.715** | 0.628 | 0.50 | upload failed |
+
+Beats persistence at every horizon, and 72h came in **above** the 0.706 recorded
+in Phase 4 (more data since). The weight the job chose on validation — 0.35 at
+24h and 48h — is lower than the 0.5 the Phase 4 experiments landed on, which is
+consistent with those experiments' finding that the exact weight is not delicate.
+
+### The registry write had no retry, and that is where it broke
+
+The 72h model trained and evaluated fine, uploaded `model.pkl` and `blend.json`,
+then died on `input_example.json`:
+
+```
+HTTP 500, errorCode 110043: "Error occurred while uploading file"
+com.mysql.clusterj.ClusterJDatastoreException: code 626, Tuple did not exist
+  at org.apache.hadoop.hdfs.server.namenode.FSDirDeleteOp
+```
+
+Server-side race inside Hopsworks' filesystem metadata layer, on a *delete*
+during upload. Not a client error: the identical code path had succeeded for the
+24h and 48h models minutes earlier in the same run.
+
+What made a transient fault fatal is that `register.py` was the only Hopsworks
+caller in the project **without a retry** — `pipeline.py` retries inserts,
+`hopsworks_store.py` retries reads, the registry write retried nothing. Fixed:
+`create_model` and `save()` are now retried together with backoff. Together,
+not `save()` alone, because retrying `save()` would reuse a version whose upload
+is already half-written, while a fresh `create_model` takes the next version
+number and starts clean.
+
+That leaves a second-order problem: a failed attempt can leave a version whose
+metadata row exists but whose files do not, and `load_latest_model` took the
+highest version on trust. It now walks versions downwards until one loads.
+Serving last week's intact model is correct; refusing to start because the newest
+version is half-written is not.
+
+Writing the test for that found a third bug: a truncated `blend.json` raised
+`JSONDecodeError` and took the loader down — the exact artifact a failed upload
+leaves behind. It is now tolerated, falling through to the registry metric and
+then to a withheld horizon.
+
+Tests: 57 → 66.
+
 ---
 
 ## Open items
 
+- Re-run the training pipeline so the 72h model registers
 - Assemble and structure the final report from this log
 - Run the explainability workflow once to replace the committed Random Forest
   SHAP plot

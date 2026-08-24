@@ -90,7 +90,8 @@ served a stale model while looking healthy.
   averaging-window approximation this makes
 - **Feature store + model registry:** [Hopsworks](https://www.hopsworks.ai/) (free tier)
 - **Models:** scikit-learn (HistGradientBoosting — deployed — plus Ridge and Random
-  Forest), TensorFlow/Keras MLP, statsmodels ARIMA, and an explicit persistence baseline
+  Forest), TensorFlow/Keras MLP, statsmodels ARIMA, and an explicit persistence
+  baseline. All are scored side by side in `reports/model_comparison.json`
 - **Explainability:** SHAP
 - **Automation:** GitHub Actions — feature pipeline hourly, training pipeline daily,
   tests on every push, explainability weekly
@@ -139,7 +140,8 @@ hurt.
 - `serving/forecast.py` — the forecast, shared by both front ends
 - `api/` — FastAPI service
 - `app/` — Streamlit dashboard
-- `notebooks/01_eda.ipynb` — exploratory analysis
+- `notebooks/01_eda.ipynb` — exploratory analysis over the full 5.7 years, with the
+  decision each finding drove
 - `tests/` — 66 tests: the AQI calculation, the blend arithmetic, model loading, and the API contract
 - `docs/ARCHITECTURE.md` — how the pieces fit together, and the conventions that are
   load-bearing rather than stylistic

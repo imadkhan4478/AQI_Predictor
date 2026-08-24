@@ -396,7 +396,9 @@ duplicate timestamps: 0     nulls: 0
 Two earlier conclusions reversed once there was enough data to test them properly:
 
 - **Lag/rolling features now help** (0.645 → 0.660 at 24h; 0.414 → 0.468 at 72h).
-  They *hurt* at 2k rows — too many features for too few samples.
+  They *hurt* badly at 2k rows — 0.645 → 0.211 at 24h — because 33 features over
+  2,065 samples is too many parameters for too few observations. Same feature set,
+  opposite verdict, decided entirely by sample count.
 - **`day`/`month` now hurt** (0.628 vs 0.645). The memorization crutch is gone.
 - **72h went from broken to working**: −0.081 → +0.468.
 
@@ -513,6 +515,11 @@ non-stationarity, not of a bad model.
 Retrain at successive monthly origins, score only the following month, roll
 forward. 12 retrains, ~7,578 predictions per horizon, persistence scored on
 identical rows.
+
+The size of the measurement artefact this removes: the *same model* scores
+**0.738 under the frozen split and 0.831 walk-forward** at 24h. Nothing about the
+model changed — only whether the evaluation let it see recent data, as production
+does.
 
 | Horizon | Persistence | HistGB | RandomForest | Ridge |
 |---|---|---|---|---|
@@ -697,7 +704,7 @@ Decisions in the API worth keeping:
 - **The blend weight is in the response.** A consumer cannot interpret the
   number without knowing how much of it is model and how much is persistence.
 
-### Tests grew from 30 to 57, and now run in CI
+### Tests grew from 30 to 66, and now run in CI
 
 The 30 existing tests all covered `aqi.py`. Nothing covered the arithmetic that
 turns a predicted delta into a displayed AQI — the exact thing that had been

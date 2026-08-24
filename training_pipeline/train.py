@@ -17,6 +17,7 @@ from training_pipeline.baseline_models import (
 )
 from training_pipeline.data import DELTA_COLUMN, load_training_data, time_based_split
 from training_pipeline.evaluate import evaluate
+from training_pipeline.statistical_model import predict_delta as arima_predict_delta
 
 # TensorFlow lives in requirements-deep.txt: it cannot be resolved alongside
 # hopsworks in one pip pass. Optional so the comparison still runs without it.
@@ -31,13 +32,19 @@ RESULTS_PATH = Path("reports/model_comparison.json")
 HORIZONS_HOURS = [24, 48, 72]
 
 
-def _sklearn(build_fn):
-    def train_predict(X_train, y_train, X_test):
-        model = build_fn()
-        model.fit(X_train, y_train)
-        return model.predict(X_test)
+def _rowwise(build_fn):
+    """Adapter for the scikit-learn models, which see one row at a time."""
 
-    return train_predict
+    def predict(context):
+        model = build_fn()
+        model.fit(context["X_train"], context["y_train"])
+        return model.predict(context["X_test"])
+
+    return predict
+
+
+def _neural(context):
+    return train_predict_nn(context["X_train"], context["y_train"], context["X_test"])
 
 
 def run(horizons=HORIZONS_HOURS):
@@ -52,23 +59,34 @@ def run(horizons=HORIZONS_HOURS):
         anchor = np.asarray(current_aqi.loc[X_test.index], dtype=float)
         truth = anchor + np.asarray(y_test, dtype=float)
 
+        # One context passed to every candidate, so models needing a continuous
+        # series (ARIMA) and models needing rows (the rest) share one loop.
+        context = {
+            "X_train": X_train,
+            "y_train": y_train,
+            "X_test": X_test,
+            "train_timestamps": timestamps.loc[X_train.index],
+            "test_timestamps": timestamps.loc[X_test.index],
+            "current_aqi_test": anchor,
+            "horizon_hours": horizon_hours,
+        }
+
         candidates = {
-            "Ridge": _sklearn(build_ridge),
-            "RandomForest": _sklearn(build_random_forest),
-            "GradientBoosting": _sklearn(build_gradient_boosting),
+            "Ridge": _rowwise(build_ridge),
+            "RandomForest": _rowwise(build_random_forest),
+            "GradientBoosting": _rowwise(build_gradient_boosting),
+            "ARIMA": arima_predict_delta,
         }
         if train_predict_nn is not None:
-            candidates["NeuralNet"] = train_predict_nn
+            candidates["NeuralNet"] = _neural
         else:
             # Announced, not silently omitted: a table with a row missing is
             # worse than one that says why.
             print("NeuralNet skipped -- TensorFlow not installed (pip install -r requirements-deep.txt)")
 
-        results = {
-            "Persistence": evaluate(truth, predict_persistence(current_aqi.loc[X_test.index]))
-        }
-        for name, train_predict in candidates.items():
-            predicted_delta = train_predict(X_train, y_train, X_test)
+        results = {"Persistence": evaluate(truth, predict_persistence(anchor))}
+        for name, predict in candidates.items():
+            predicted_delta = predict(context)
             results[name] = evaluate(truth, anchor + predicted_delta)
 
         baseline_r2 = results["Persistence"]["R2"]

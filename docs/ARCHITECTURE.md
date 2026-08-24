@@ -19,8 +19,8 @@ the decisions, and the experiments that failed on the way to them, see
 | 9 | CI/CD: features hourly, training daily | `.github/workflows/` |
 | 10 | Web app: load model + features, descriptive dashboard | `app/app.py` (Streamlit) |
 | 11 | Streamlit/Gradio **and** Flask/FastAPI | `api/main.py` + `app/app.py`, over `serving/forecast.py` |
-| 12 | EDA | `notebooks/01_eda.ipynb` |
-| 13 | Variety of models, statistical → deep learning | ARIMA, Ridge, Random Forest, HistGradientBoosting, Keras MLP |
+| 12 | EDA to identify trends | `notebooks/01_eda.ipynb` — full history, trend and seasonality separated |
+| 13 | Variety of models, statistical → deep learning | ARIMA, Ridge, Random Forest, HistGradientBoosting, Keras MLP — all compared in `training_pipeline/train.py`, results in `reports/model_comparison.json` |
 | 14 | SHAP or LIME | `training_pipeline/explain.py`, `.github/workflows/explainability.yml` |
 | 15 | Alerts for hazardous AQI | `serving/forecast.py` `_build_alert()` + `aqi_category()` |
 | 16 | Detailed report | *outstanding* — to be assembled from the experiment log |

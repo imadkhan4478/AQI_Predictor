@@ -105,17 +105,6 @@ def time_based_split(X, y, timestamps, horizon_hours=FORECAST_HORIZON_HOURS, tes
     return X.loc[purged_idx], X.loc[test_idx], y.loc[purged_idx], y.loc[test_idx]
 
 
-def load_raw_aqi_series():
-    """Full AQI series on a regular hourly grid, small gaps interpolated.
-
-    ARIMA needs one continuous evenly-spaced sequence rather than independent
-    rows."""
-    df = read_features_df().sort_values("timestamp")
-    series = df.set_index("timestamp")["aqi"]
-    series = series.asfreq("h").interpolate()
-    return series
-
-
 def load_training_data(horizon_hours=FORECAST_HORIZON_HOURS, target=TARGET_COLUMN):
     """Returns (X, y, timestamps, current_aqi).
 

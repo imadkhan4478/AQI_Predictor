@@ -9,8 +9,6 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
 
-from training_pipeline.data import load_raw_aqi_series
-
 ARIMA_ORDER = (2, 1, 2)  # (autoregressive, differencing, moving-average) terms
 
 # ARIMA parameters are local, and fitting (2,1,2) over 5.7 years of hourly data
@@ -36,7 +34,7 @@ def predict_delta(context):
     test_timestamps = context["test_timestamps"]
     train_end = context["train_timestamps"].max()
 
-    series = load_raw_aqi_series()
+    series = context["aqi_series"]
     fit_start = train_end - pd.Timedelta(hours=TRAILING_FIT_HOURS)
     fitted = ARIMA(series.loc[fit_start:train_end], order=ARIMA_ORDER).fit()
 

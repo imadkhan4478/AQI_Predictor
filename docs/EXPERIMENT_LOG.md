@@ -818,6 +818,26 @@ then to a withheld horizon.
 
 Tests: 57 → 66.
 
+### The analysis moved to a runner for the same reason the backfill did
+
+Running the full model comparison locally failed exactly as Phase 0.2 predicted:
+`FlightUnavailableError: End of TCP stream` after roughly three minutes, twice in
+a row, while reading the 49k-row feature group over Arrow Flight. Small requests
+from this machine are fine; sustained transfers are not, and this is the fourth
+operation to hit it.
+
+Two responses:
+
+1. **`.github/workflows/analysis.yml`** — runs the comparison and executes the
+   EDA notebook on a runner and commits both back, so the artifacts a reviewer
+   reads are produced where the transfer is reliable. Note nbconvert's per-cell
+   timeout defaults to 30 seconds, which the feature-store read alone exceeds.
+2. **`train.py` now reads the feature group three times instead of six.** ARIMA
+   needs a continuous hourly series, and it was calling `load_raw_aqi_series()`
+   — a second full read per horizon. The series is now built from the data
+   already in memory. Halving the number of transfers on the least reliable step
+   in the pipeline is worth more than the code it saved.
+
 ---
 
 ## Open items

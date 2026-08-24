@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from dotenv import load_dotenv
 
 from training_pipeline.baseline_models import (
@@ -59,6 +60,18 @@ def run(horizons=HORIZONS_HOURS):
         anchor = np.asarray(current_aqi.loc[X_test.index], dtype=float)
         truth = anchor + np.asarray(y_test, dtype=float)
 
+        # ARIMA needs one continuous evenly-spaced series rather than independent
+        # rows. Built from the data already in memory: re-reading the feature
+        # group per horizon meant six full transfers per run, and the read is
+        # the least reliable step in the pipeline.
+        aqi_series = (
+            pd.Series(np.asarray(current_aqi, dtype=float), index=timestamps)
+            .sort_index()
+            .asfreq("h")
+            .interpolate()
+            .dropna()
+        )
+
         # One context passed to every candidate, so models needing a continuous
         # series (ARIMA) and models needing rows (the rest) share one loop.
         context = {
@@ -68,6 +81,7 @@ def run(horizons=HORIZONS_HOURS):
             "train_timestamps": timestamps.loc[X_train.index],
             "test_timestamps": timestamps.loc[X_test.index],
             "current_aqi_test": anchor,
+            "aqi_series": aqi_series,
             "horizon_hours": horizon_hours,
         }
 

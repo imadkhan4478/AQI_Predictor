@@ -1,32 +1,47 @@
-"""Streamlit dashboard: current AQI + 3-day forecast, with hazardous-AQI alerts."""
+"""Streamlit dashboard: current AQI + 3-day forecast, with hazardous-AQI alerts.
+
+This file is presentation only. Every number it shows comes from
+serving/forecast.py -- either called in-process, or fetched from the FastAPI
+service when AQI_API_URL is set. Deliberately: the dashboard used to assemble
+features and apply the model itself, drifted out of step with the training
+pipeline, and served a stale model while looking healthy.
+"""
 
 import os
 import sys
 from pathlib import Path
 
 # `streamlit run app/app.py` puts this file's own folder on sys.path, not the
-# repo root, so sibling packages (app.load_model, feature_pipeline, ...)
-# wouldn't otherwise resolve. Same fix as the EDA notebook's kernel-cwd issue.
+# repo root, so sibling packages (serving, feature_pipeline, ...) wouldn't
+# otherwise resolve. Same fix as the EDA notebook's kernel-cwd issue.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 from dotenv import load_dotenv
 
-from app.load_model import load_latest_model
-from feature_pipeline.aqi import _CATEGORIES, aqi_category
-from feature_pipeline.hopsworks_store import read_features_df
-from training_pipeline.data import FEATURE_COLUMNS, add_time_features
+from feature_pipeline.aqi import _CATEGORIES
+from serving.forecast import (
+    HORIZONS_HOURS,
+    ForecastUnavailable,
+    build_forecast,
+    load_feature_row,
+    load_forecast_models,
+    model_details,
+)
 
 load_dotenv()
 
-HORIZONS_HOURS = [24, 48, 72]
-SEVERITY_RANK = {None: 0, "warning": 1, "serious": 2, "critical": 3}
-STATUS_MESSAGE = {
-    "warning": "Sensitive groups (children, elderly, respiratory/heart conditions) should limit prolonged outdoor exertion.",
-    "serious": "Everyone may begin to experience health effects. Limit prolonged outdoor exertion.",
-    "critical": "Health alert: everyone may experience serious health effects. Avoid outdoor activity.",
-}
+# Set AQI_API_URL to read from the FastAPI service instead of loading the models
+# into the Streamlit process. Both paths return the same payload -- the service
+# calls the same serving/forecast.py functions -- so this is a deployment
+# choice, not a behavioural one: one process per concern when the API is running,
+# a single self-contained process when it is not.
+API_URL = os.environ.get("AQI_API_URL", "").rstrip("/")
+API_TIMEOUT_SECONDS = 30
+
+SHAP_PLOT_PATH = "reports/shap_feature_importance.png"
 
 CARD_CSS = """
 <style>
@@ -47,28 +62,38 @@ CARD_CSS = """
 """
 
 
-@st.cache_data(ttl=600)
-def load_latest_row(city_name):
-    df = read_features_df()
-    df = add_time_features(df)
-    city_rows = df[df["city_name"] == city_name].sort_values("timestamp")
-    return city_rows.iloc[-1]
-
-
 @st.cache_resource
-def load_models():
-    models = {}
-    for horizon_hours in HORIZONS_HOURS:
-        model, version, metrics = load_latest_model(f"aqi_random_forest_{horizon_hours}h")
-        models[horizon_hours] = {"model": model, "version": version, "metrics": metrics}
-    return models
+def cached_models():
+    """Cached as a resource, not data: model objects are not serialisable and
+    should be loaded once per process, not once per session."""
+    return load_forecast_models(HORIZONS_HOURS)
 
 
-def render_hero(aqi_value, category_name, color):
+@st.cache_data(ttl=600)
+def fetch_payload(city_name):
+    """The forecast payload, from the API if one is configured, otherwise
+    computed here. TTL matches the hourly cadence of the feature pipeline."""
+    if API_URL:
+        response = requests.get(f"{API_URL}/forecast", timeout=API_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        return response.json()
+    return build_forecast(city_name, cached_models(), load_feature_row(city_name))
+
+
+@st.cache_data(ttl=600)
+def fetch_model_details():
+    if API_URL:
+        response = requests.get(f"{API_URL}/models", timeout=API_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        return response.json()
+    return model_details(cached_models())
+
+
+def render_hero(reading):
     st.markdown(
-        f"""<div class="aqi-hero" style="background:{color};">
-                <div class="value">{aqi_value}</div>
-                <div class="category">{category_name}</div>
+        f"""<div class="aqi-hero" style="background:{reading['color']};">
+                <div class="value">{reading['aqi']}</div>
+                <div class="category">{reading['category']}</div>
             </div>""",
         unsafe_allow_html=True,
     )
@@ -82,20 +107,18 @@ def render_legend():
     st.markdown(chips, unsafe_allow_html=True)
 
 
-def plot_forecast(forecast):
-    labels = ["Now" if h == 0 else f"+{h}h" for h in forecast]
-    values = list(forecast.values())
-    categories = [aqi_category(v) for v in values]
-    colors = [color for _, _, color in categories]
+def plot_forecast(payload):
+    points = [{"horizon_hours": 0, **payload["current"]}] + payload["forecast"]
+    labels = ["Now" if p["horizon_hours"] == 0 else f"+{p['horizon_hours']}h" for p in points]
 
     fig = go.Figure(
         go.Bar(
             x=labels,
-            y=values,
-            marker_color=colors,
-            text=values,
+            y=[p["aqi"] for p in points],
+            marker_color=[p["color"] for p in points],
+            text=[p["aqi"] for p in points],
             textposition="outside",
-            customdata=[name for name, _, _ in categories],
+            customdata=[p["category"] for p in points],
             hovertemplate="<b>%{x}</b><br>AQI: %{y}<br>%{customdata}<extra></extra>",
         )
     )
@@ -115,55 +138,78 @@ def main():
     st.markdown(CARD_CSS, unsafe_allow_html=True)
 
     st.title(f"🌫️ AQI Predictor — {city_name}")
-    st.caption("3-day Air Quality Index forecast · Random Forest, retrained daily · data refreshed hourly")
+    st.caption(
+        "3-day Air Quality Index forecast · gradient boosting blended with a persistence "
+        "baseline, retrained daily · data refreshed hourly"
+        + (f" · served by the API at {API_URL}" if API_URL else "")
+    )
 
-    with st.spinner("Loading latest data and models..."):
-        latest_row = load_latest_row(city_name)
-        models = load_models()
+    try:
+        with st.spinner("Loading latest data and models..."):
+            payload = fetch_payload(city_name)
+    except ForecastUnavailable as error:
+        st.warning(f"No forecast available yet: {error}")
+        return
+    except requests.RequestException as error:
+        st.error(f"Could not reach the forecast API at {API_URL}: {error}")
+        return
+    except ConnectionError as error:
+        st.error(f"Could not reach the model registry: {error}")
+        return
 
-    X_live = latest_row[FEATURE_COLUMNS].to_frame().T
-
-    forecast = {0: int(latest_row["aqi"])}
-    for horizon_hours in HORIZONS_HOURS:
-        prediction = models[horizon_hours]["model"].predict(X_live)[0]
-        forecast[horizon_hours] = round(prediction)
-
-    current_category, _, current_color = aqi_category(forecast[0])
+    if payload["unavailable_horizons"]:
+        # Better a visibly missing horizon than a plausible-looking number
+        # produced with a guessed blend weight.
+        st.error(
+            "No blend weight is registered for the "
+            + ", ".join(f"{h}h" for h in payload["unavailable_horizons"])
+            + " model, so its forecast is withheld. Re-run the training pipeline."
+        )
 
     col1, col2 = st.columns([1, 2], gap="large")
     with col1:
-        render_hero(forecast[0], current_category, current_color)
+        render_hero(payload["current"])
     with col2:
         st.write("")
-        st.caption(f"As of **{latest_row['timestamp']} UTC**")
-        st.write(f"Dominant pollutant: **{latest_row['dominant_pollutant']}**")
+        st.caption(f"As of **{payload['observed_at']}**")
+        if payload["current"]["dominant_pollutant"]:
+            st.write(f"Dominant pollutant: **{payload['current']['dominant_pollutant']}**")
         render_legend()
 
-    worst_horizon, worst_severity = max(
-        ((h, aqi_category(v)[1]) for h, v in forecast.items()),
-        key=lambda item: SEVERITY_RANK[item[1]],
-    )
-    if worst_severity:
-        when = "now" if worst_horizon == 0 else f"in {worst_horizon}h"
-        category_name, _, _ = aqi_category(forecast[worst_horizon])
-        alert_fn = st.error if worst_severity == "critical" else st.warning
-        alert_fn(f"**{category_name} air quality expected {when}** (AQI {forecast[worst_horizon]}). {STATUS_MESSAGE[worst_severity]}")
+    if payload["alert"]:
+        alert_fn = st.error if payload["alert"]["severity"] == "critical" else st.warning
+        alert_fn(f"**{payload['alert']['message']}**")
 
-    st.plotly_chart(plot_forecast(forecast), use_container_width=True)
+    st.plotly_chart(plot_forecast(payload), use_container_width=True)
 
     col_a, col_b = st.columns(2)
     with col_a:
         with st.expander("Why does the model predict this? (SHAP feature importance)"):
-            st.image("reports/shap_feature_importance.png")
-            st.caption(
-                "Feature importance for the Random Forest model, from the 4-model comparison "
-                "(Ridge/RandomForest/NeuralNet/ARIMA) documented in training_pipeline/."
-            )
+            if os.path.exists(SHAP_PLOT_PATH):
+                st.image(SHAP_PLOT_PATH)
+                st.caption(
+                    "Which features drive the predicted *change* in AQI. Regenerated by "
+                    "the explainability workflow."
+                )
+            else:
+                st.info(
+                    f"No SHAP plot at {SHAP_PLOT_PATH} yet — run "
+                    "`python -m training_pipeline.explain`."
+                )
     with col_b:
         with st.expander("Model details"):
-            for horizon_hours in HORIZONS_HOURS:
-                info = models[horizon_hours]
-                st.write(f"**{horizon_hours}h model** — v{info['version']}")
+            st.caption(
+                "Each model predicts the change in AQI; the forecast shown is "
+                "`current AQI + blend weight × predicted change`. A blend weight of 0 "
+                "would be the naive persistence baseline."
+            )
+            for info in fetch_model_details():
+                weight = info["blend_weight"]
+                weight_text = "not registered" if weight is None else f"{weight:.2f}"
+                st.write(
+                    f"**{info['horizon_hours']}h model** — v{info['version']} · "
+                    f"blend weight {weight_text}"
+                )
                 st.json(info["metrics"])
 
 

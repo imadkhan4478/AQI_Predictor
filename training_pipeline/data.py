@@ -58,7 +58,15 @@ def add_lag_features(df):
     at 72h). Worth re-checking if the feature set changes substantially again.
     """
     df = df.sort_values("timestamp").set_index("timestamp").asfreq("h")
-    df = df.interpolate(limit=6)  # bridge short gaps only, never long outages
+
+    # Bridge short gaps only, never long outages. Restricted to numeric columns
+    # on purpose: pandas skips object columns here anyway (city_name and
+    # dominant_pollutant cannot be interpolated across a gap), but interpolating
+    # a frame that contains them is deprecated and is scheduled to start
+    # raising. Selecting the numeric columns keeps the behaviour identical and
+    # stops a pandas upgrade from breaking the training pipeline.
+    numeric_columns = df.select_dtypes(include="number").columns
+    df[numeric_columns] = df[numeric_columns].interpolate(limit=6)
 
     for lag in AQI_LAGS_HOURS:
         df[f"aqi_lag_{lag}"] = df["aqi"].shift(lag)

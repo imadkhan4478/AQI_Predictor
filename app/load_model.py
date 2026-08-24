@@ -1,5 +1,6 @@
 """Load the latest registered forecast model(s) from the Hopsworks Model Registry."""
 
+import json
 import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -52,10 +53,41 @@ def _connect():
     raise ConnectionError(f"Could not connect to Hopsworks after {MAX_CONNECT_ATTEMPTS} attempts. Last error: {last_error}")
 
 
+def _read_blend_weight(local_dir, metrics):
+    """The scalar `w` in `prediction = current_aqi + w * predicted_delta`.
+
+    Preferred source is blend.json, written next to the artifact by
+    training_pipeline/register.py, because it travels with the model file and
+    cannot drift from it. Registry metrics are the fallback for models
+    registered before blend.json existed.
+
+    Deliberately no numeric default: w silently defaulting to 1.0 would ship an
+    unshrunk model that loses to the naive baseline at every horizon, and it
+    would look like a working forecast. Returning None makes the caller decide
+    visibly instead.
+    """
+    blend_path = os.path.join(local_dir, "blend.json")
+    if os.path.exists(blend_path):
+        with open(blend_path, encoding="utf-8") as handle:
+            weight = json.load(handle).get("blend_weight")
+            if weight is not None:
+                return float(weight)
+
+    weight = (metrics or {}).get("blend_weight")
+    return None if weight is None else float(weight)
+
+
 def load_latest_model(model_name):
-    """Fetch the highest-version copy of a registered model. NOTE: get_model()'s
-    version=None default actually means version 1, not "latest" -- so once daily
-    retraining is producing new versions, we must pick the max ourselves."""
+    """Fetch the highest-version copy of a registered model.
+
+    Returns (model, version, metrics, blend_weight). The model predicts the
+    *change* in AQI, not its level, so blend_weight is not optional
+    bookkeeping -- without it the caller cannot turn the output into a forecast.
+
+    NOTE: get_model()'s version=None default actually means version 1, not
+    "latest" -- so once daily retraining is producing new versions, we must pick
+    the max ourselves.
+    """
     project = _connect()
     mr = project.get_model_registry()
 
@@ -64,4 +96,5 @@ def load_latest_model(model_name):
 
     local_dir = latest.download()
     model = joblib.load(os.path.join(local_dir, "model.pkl"))
-    return model, latest.version, latest.training_metrics
+    metrics = latest.training_metrics
+    return model, latest.version, metrics, _read_blend_weight(local_dir, metrics)

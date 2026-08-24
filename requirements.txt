@@ -1,7 +1,5 @@
-# Pinned to the versions this project was developed and evaluated against, so a
-# GitHub runner installs the same stack as the local venv. Unpinned, a silent
-# minor upgrade on the daily job can change model behaviour with no commit to
-# point at -- and every measurement in docs/EXPERIMENT_LOG.md was taken here.
+# Pinned to the versions every measurement in docs/EXPERIMENT_LOG.md was taken
+# against, so a GitHub runner installs the same stack as the local venv.
 
 # Core
 python-dotenv==1.2.2
@@ -17,10 +15,8 @@ confluent-kafka==2.15.0
 scikit-learn==1.9.0
 joblib==1.5.3
 statsmodels==0.14.6
-# TensorFlow is NOT here -- see requirements-deep.txt. hopsworks 5.0.3 declares
-# protobuf<5 while tensorflow 2.21 requires protobuf>=6.31, so pip cannot
-# resolve both in one pass. Nothing in the deployed system needs TensorFlow:
-# it is used only by the neural-net entry in the model comparison.
+# TensorFlow is in requirements-deep.txt: it cannot be resolved alongside
+# hopsworks in one pip pass, and only the model comparison needs it.
 
 # Explainability
 shap==0.51.0

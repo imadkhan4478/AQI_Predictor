@@ -1,28 +1,16 @@
-# Deep-learning extra: the TensorFlow/Keras entry in the model comparison
-# (training_pipeline/deep_model.py, run by training_pipeline/train.py).
+# The TensorFlow/Keras entry in the model comparison (training_pipeline/train.py).
 #
-# Separate from requirements.txt because the two cannot be resolved together:
+# Separate from requirements.txt because pip cannot resolve the two together:
+# hopsworks 5.0.3 requires protobuf<5, tensorflow 2.21 requires protobuf>=6.31.
+# hopsworks' upper bound is over-tight in practice -- this project has run on
+# protobuf 7.x throughout -- but pip refuses the combination regardless.
 #
-#     hopsworks 5.0.3   depends on protobuf<5.0.0 and >=4.25.4
-#     tensorflow 2.21.0 depends on protobuf<8.0.0 and >=6.31.1
-#
-# hopsworks' upper bound is over-tight in practice -- this project has run
-# against protobuf 7.x throughout -- but pip cannot know that, so it refuses the
-# combination and the install fails outright.
-#
-# Install in two steps, in this order:
-#
+# Install second:
 #     pip install -r requirements.txt
 #     pip install -r requirements-deep.txt
 #
-# The second command upgrades protobuf and prints an "incompatible" warning
-# about hopsworks. That warning is expected and is the state this project has
-# always run in locally.
-#
-# Nothing deployed needs this file. The hourly feature job, the daily
-# registration job, the API, the dashboard and the test suite all run on
-# requirements.txt alone -- which is why CI installs only that, and why pinning
-# revealed that the runner had been quietly installing tensorflow 2.19.1 and
-# numpy 2.1.3 while local development used 2.21.0 and 2.4.6.
+# The second command upgrades protobuf and warns about hopsworks. That warning is
+# expected. Nothing deployed needs this file -- the pipelines, API, dashboard and
+# tests all run on requirements.txt alone.
 
 tensorflow==2.21.0

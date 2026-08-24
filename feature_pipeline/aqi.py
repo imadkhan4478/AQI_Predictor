@@ -1,26 +1,12 @@
 """Compute US EPA Air Quality Index from pollutant concentrations.
 
-KNOWN APPROXIMATION -- read before quoting these numbers as "EPA AQI".
-
-The EPA defines each breakpoint table over an averaging window, not over an
-instantaneous reading: 24 hours for PM2.5 and PM10, 8 hours for O3 and CO, and
-1 hour for SO2 and NO2. This module applies those tables directly to the single
-hourly reading OpenWeather publishes, which is the only thing available at
-hourly cadence from a free source.
-
-The consequence is specific rather than vague: because PM is averaged over a
-day officially and over one hour here, short pollution spikes register at full
-strength instead of being smoothed, so this value is *more volatile* than
-official AQI and reads higher during a spike and lower after it. It tracks
-official AQI closely on flat days and diverges most on sharply changing ones.
-
-Treat the output as an hourly AQI proxy computed with EPA breakpoints -- correct
-and consistent as a target for forecasting, which is what the project needs,
-but not a figure to publish as the official EPA AQI for a given hour. Rolling
-the concentrations to their proper windows before scoring would fix this; it is
-recorded in docs/EXPERIMENT_LOG.md rather than done, because every model result
-in that log was measured against this definition and changing it silently would
-invalidate the comparisons.
+KNOWN APPROXIMATION: the EPA defines its breakpoints over averaging windows --
+24h for PM, 8h for O3/CO, 1h for SO2/NO2 -- but they are applied here to the
+single hourly reading OpenWeather publishes. Short spikes therefore register at
+full strength instead of being smoothed, making this value more volatile than
+official AQI: higher during a spike, lower after it. It is a consistent hourly
+proxy suitable as a forecasting target, not a figure to publish as official AQI.
+See docs/EXPERIMENT_LOG.md for why it is disclosed rather than changed.
 """
 
 import math
@@ -80,9 +66,9 @@ _BREAKPOINTS = {
 # Molecular weights (g/mol), for converting ug/m3 -> ppb/ppm at 25C/1atm.
 _MOLECULAR_WEIGHTS = {"co": 28.01, "o3": 48.00, "so2": 64.066, "no2": 46.0055}
 
-# EPA breakpoints assume concentrations truncated to this many decimal places
-# before matching (e.g. PM10 to whole numbers) -- without this, values that
-# fall in the gap between adjacent buckets (e.g. PM10 = 54.5) match nothing.
+# EPA breakpoints assume concentrations truncated to this many decimals before
+# matching; without it, a value in the gap between buckets (PM10 54.5) matches
+# nothing.
 _TRUNCATE_DECIMALS = {"pm2_5": 1, "pm10": 0, "o3": 0, "co": 1, "so2": 0, "no2": 0}
 
 
@@ -97,14 +83,9 @@ def _truncate(value, decimals):
 
 def _sub_index(pollutant, concentration):
     breakpoints = _BREAKPOINTS[pollutant]
-    # Clamp into the breakpoint range at both ends. The upper clamp keeps
-    # readings above the top breakpoint pinned to AQI 500. The lower clamp
-    # matters because OpenWeather's pollution data comes from a chemical
-    # transport model that occasionally emits small negative concentrations
-    # for trace gases -- physically impossible, but a real numerical artifact.
-    # EPA breakpoints start at 0, so without this a negative reading matches
-    # no range and silently returns None, which then blows up the max() in
-    # compute_aqi. Treat "negative" as "none detected".
+    # Clamp at both ends: above the top breakpoint pins to AQI 500, and below
+    # zero handles the small negative concentrations OpenWeather's transport
+    # model occasionally emits, which would otherwise match no range.
     clamped = min(max(concentration, breakpoints[0][0]), breakpoints[-1][1])
     capped = _truncate(clamped, _TRUNCATE_DECIMALS[pollutant])
     for c_low, c_high, i_low, i_high in breakpoints:
@@ -113,13 +94,9 @@ def _sub_index(pollutant, concentration):
     return None
 
 
-# (aqi_low, aqi_high, category_name, alert_severity, color). alert_severity is
-# None for the two "safe" categories, otherwise a label the app can key alert
-# styling/urgency off of. Colors are the official EPA/AirNow AQI colors --
-# not our generic categorical palette. AQI color-coding is a globally
-# recognized convention (like traffic lights), so matching the real-world
-# standard beats forcing a brand-neutral scheme onto a domain that already
-# has its own universally recognized color language.
+# (aqi_low, aqi_high, category_name, alert_severity, color). Severity is None for
+# the two safe categories. Colours are the official EPA/AirNow palette: AQI
+# colour-coding is a recognised convention, like traffic lights.
 _CATEGORIES = [
     (0, 50, "Good", None, "#00e400"),
     (51, 100, "Moderate", None, "#f2c200"),
@@ -153,9 +130,8 @@ def compute_aqi(components):
         if sub_index is not None:
             sub_indices[pollutant] = sub_index
 
-    # Clamping above should make an unmatched pollutant impossible, but a
-    # reading we can't score at all must fail loudly rather than quietly
-    # producing an AQI derived from nothing.
+    # Clamping should make this impossible, but an unscoreable reading must fail
+    # loudly rather than produce an AQI derived from nothing.
     if not sub_indices:
         raise ValueError(f"No pollutant could be scored from components: {components}")
 

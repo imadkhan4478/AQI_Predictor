@@ -1,9 +1,7 @@
-"""Tests for the FastAPI service.
+"""Tests for the FastAPI service: routing, status codes and response shape.
 
-The registry and feature store are replaced by pre-populated caches, so these
-tests check what the API contributes -- routing, status codes and response
-shape -- rather than re-testing the forecast arithmetic covered in
-test_forecast.py.
+The registry and feature store are replaced by pre-populated caches. The
+forecast arithmetic itself is covered in test_forecast.py.
 """
 
 import numpy as np
@@ -69,9 +67,8 @@ def test_forecast_returns_all_three_horizons(client):
 
 
 def test_forecast_includes_the_blend_weight_actually_used(client):
-    """The weight is part of the contract, not an implementation detail: a
-    consumer cannot interpret the number without knowing how much of it is the
-    model and how much is persistence."""
+    """Part of the contract: the forecast cannot be interpreted without knowing
+    how much of it is model and how much is persistence."""
     for point in client.get("/forecast").json()["forecast"]:
         assert point["blend_weight"] == 0.5
         assert point["model_version"] == 5
@@ -103,8 +100,7 @@ def test_health_is_ok_once_warm(client):
 
 
 def test_health_does_not_touch_the_registry(monkeypatch):
-    """An orchestrator polling /health must not be able to trigger a Hopsworks
-    login -- otherwise the health check becomes the load."""
+    """Otherwise a health check that polls becomes the load it should detect."""
     monkeypatch.setattr(CACHE, "models", None)
     monkeypatch.setattr(CACHE, "feature_row", None)
     monkeypatch.setattr(CACHE, "feature_row_read_at", None)
@@ -120,8 +116,8 @@ def test_health_does_not_touch_the_registry(monkeypatch):
 
 
 def test_missing_data_is_503_not_500(client, monkeypatch):
-    """The service is healthy; the data it needs is not there yet. A client
-    should retry, which 503 says and 500 does not."""
+    """The service is healthy, the data is not there yet, and the client should
+    retry -- which 503 says and 500 does not."""
     monkeypatch.setattr(
         CACHE, "get_feature_row", lambda city: (_ for _ in ()).throw(ForecastUnavailable("no rows"))
     )

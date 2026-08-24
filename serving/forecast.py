@@ -1,15 +1,7 @@
-"""The forecast, computed once and shared by every front end.
+"""Build the forecast payload served by both the API and the dashboard.
 
-Both the FastAPI service (`api/main.py`) and the Streamlit dashboard
-(`app/app.py`) call into this module rather than each assembling features and
-applying the blend themselves.
-
-That is not tidiness for its own sake. The last serious bug in this project was
-exactly this kind of duplication: the training pipeline moved to a delta target
-with lag features and the dashboard kept its own copy of the feature assembly,
-so it silently served a stale model and would have rendered a predicted *change*
-of -4 as "AQI 4 - Good" for a city sitting at 170. Two front ends multiply that
-risk. One serving path does not.
+Kept in one place so the two front ends cannot drift apart on how features are
+assembled or how the blend is applied.
 """
 
 import numpy as np
@@ -22,11 +14,9 @@ from training_pipeline.data import FEATURE_COLUMNS, add_lag_features, add_time_f
 HORIZONS_HOURS = (24, 48, 72)
 MODEL_NAME_TEMPLATE = "aqi_forecast_{}h"
 
-# AQI is defined on 0-500. A blended prediction is arithmetic and has no such
-# bound, so clamp before anything renders it.
+# AQI is defined on 0-500; a blended prediction is arithmetic and unbounded.
 AQI_MIN, AQI_MAX = 0, 500
 
-# Ordered so "the worst thing in the forecast" is well defined.
 SEVERITY_RANK = {None: 0, "warning": 1, "serious": 2, "critical": 3}
 
 HEALTH_ADVICE = {
@@ -46,22 +36,15 @@ HEALTH_ADVICE = {
 
 
 class ForecastUnavailable(RuntimeError):
-    """Raised when a forecast genuinely cannot be produced.
-
-    Distinct from a missing single horizon, which is reported in the payload
-    rather than raised: one absent model should not blank the whole dashboard.
-    """
+    """No forecast can be produced at all. A single missing horizon is reported
+    in the payload instead, so one absent model doesn't blank the dashboard."""
 
 
 def load_feature_row(city_name):
-    """The newest feature row, built through the *same* transformations the
-    training pipeline uses.
+    """Newest feature row, built through the same transformations training uses.
 
-    The model's features include AQI lags and rolling statistics, which are
-    functions of the preceding hours -- so the live row cannot be assembled from
-    a single feature-store record. Reusing add_time_features and
-    add_lag_features here, rather than recomputing them, is what keeps training
-    and serving in step.
+    The lag and rolling features depend on preceding hours, so the live row
+    cannot be assembled from a single feature-store record.
     """
     df = read_features_df()
     city_rows = df[df["city_name"] == city_name]
@@ -71,10 +54,6 @@ def load_feature_row(city_name):
     city_rows = add_time_features(city_rows)
     city_rows = add_lag_features(city_rows)
 
-    # Name the columns explicitly rather than letting pandas raise a bare
-    # KeyError. If the feature group's schema and FEATURE_COLUMNS ever diverge
-    # again -- the failure this whole module exists to prevent -- the error
-    # should say which columns are missing.
     missing = [column for column in FEATURE_COLUMNS if column not in city_rows.columns]
     if missing:
         raise ForecastUnavailable(
@@ -107,16 +86,11 @@ def load_forecast_models(horizons=HORIZONS_HOURS):
 
 
 def blend_forecast(model_info, features, current_aqi):
-    """Turn a predicted *change* in AQI into a forecast level.
+    """Turn a predicted change in AQI into a forecast level:
+    `current_aqi + w * predicted_delta`, where w = 0 is persistence.
 
-        prediction = current_aqi + w * predicted_delta
-
-    w = 0 is exactly the persistence baseline, w = 1 the unshrunk model. The
-    weight comes from walk-forward validation and is stored with the artifact.
-
-    Returns None when no weight is registered. Deliberately not defaulting to
-    1.0: that would deploy the unshrunk model, which loses to persistence at
-    every horizon, and it would look exactly like a working forecast.
+    Returns None when no weight is registered, rather than defaulting to 1.0 --
+    the unshrunk model loses to persistence at every horizon.
     """
     weight = model_info.get("blend_weight")
     if weight is None:
@@ -132,11 +106,10 @@ def _describe(aqi_value):
 
 
 def build_forecast(city_name, models, feature_row):
-    """Assemble the full payload both front ends render.
+    """Assemble the payload both front ends render.
 
-    Returns plain JSON-serialisable types only -- no numpy scalars, no
-    DataFrames -- so FastAPI can return it unchanged and Streamlit can read the
-    same structure whether it came from this function or over HTTP.
+    Returns JSON-serialisable types only, so FastAPI can return it unchanged and
+    Streamlit reads the same structure whether it came from here or over HTTP.
     """
     features = feature_row[FEATURE_COLUMNS].to_frame().T.astype(float)
     current_aqi = int(feature_row["aqi"])
@@ -157,8 +130,7 @@ def build_forecast(city_name, models, feature_row):
         )
 
     current = _describe(current_aqi)
-    # Rows on interpolated hours carry no dominant pollutant: the lag features
-    # reindex onto a continuous hourly grid, and a text column cannot be
+    # Interpolated hours carry no dominant pollutant: a text column can't be
     # interpolated across a gap the way a numeric one can.
     dominant = feature_row.get("dominant_pollutant")
     current["dominant_pollutant"] = dominant if isinstance(dominant, str) else None
@@ -174,10 +146,10 @@ def build_forecast(city_name, models, feature_row):
 
 
 def _build_alert(current, horizons):
-    """The single worst point in the forecast, if it warrants an alert.
+    """The worst point in the forecast, if it warrants an alert.
 
-    Keyed off aqi_category() rather than its own thresholds, so the alert
-    boundaries and the AQI scale cannot disagree -- they read the same table.
+    Severity comes from aqi_category() so the alert boundaries and the AQI scale
+    read from one table.
     """
     points = [{"horizon_hours": 0, **current}] + list(horizons)
     worst = max(points, key=lambda point: SEVERITY_RANK[point["severity"]])

@@ -1,9 +1,7 @@
-"""Tests for the serving layer -- the blend arithmetic and the payload both the
-API and the dashboard render.
+"""Tests for the serving layer: the blend arithmetic and the payload shape.
 
-No network and no Hopsworks: the feature store and the registered models are
-substituted, because what needs testing here is the arithmetic and the shape of
-the response, not whether Hopsworks is reachable.
+The feature store and registered models are substituted, so no network or
+Hopsworks credentials are needed.
 """
 
 import numpy as np
@@ -63,8 +61,8 @@ def test_half_weight_shrinks_the_delta():
 
 
 def test_missing_weight_withholds_the_forecast():
-    """A weight of None must never be silently treated as 1.0: the unshrunk
-    model loses to persistence at every horizon."""
+    """None must never be treated as 1.0: the unshrunk model loses to
+    persistence at every horizon."""
     features = feature_row()[fc.FEATURE_COLUMNS].to_frame().T.astype(float)
     assert fc.blend_forecast(model_info(-40, None), features, 170) is None
 
@@ -104,8 +102,8 @@ def test_horizon_without_a_weight_is_reported_not_guessed():
 
 
 def test_interpolated_row_reports_no_dominant_pollutant():
-    """Lag features reindex onto a continuous hourly grid; a text column cannot
-    be interpolated across a gap, so it arrives as NaN rather than a string."""
+    """A text column cannot be interpolated across a gap in the hourly grid, so
+    it arrives as NaN rather than a string."""
     payload = fc.build_forecast("Lahore", {24: model_info(0, 0.5)}, feature_row(dominant=np.nan))
     assert payload["current"]["dominant_pollutant"] is None
 
@@ -135,9 +133,8 @@ def test_no_alert_when_air_is_acceptable():
 
 
 def test_alert_thresholds_come_from_the_aqi_table():
-    """101 is the first Unhealthy-for-Sensitive-Groups value in aqi.py. If that
-    table moves, this must move with it -- alerts and the AQI scale must not
-    disagree."""
+    """101 is the first Unhealthy-for-Sensitive-Groups value in aqi.py; alerts and
+    the AQI scale must not disagree."""
     assert fc.build_forecast("Lahore", {}, feature_row(aqi=100))["alert"] is None
     assert fc.build_forecast("Lahore", {}, feature_row(aqi=101))["alert"]["severity"] == "warning"
 
@@ -154,8 +151,7 @@ def test_load_feature_row_raises_when_the_city_is_absent(monkeypatch):
 
 
 def _store_frame(hours):
-    """A feature-store frame with every stored column, so the only thing under
-    test is how many hours of history it holds."""
+    """Every stored column, so only the amount of history varies."""
     index = pd.date_range("2026-08-01", periods=hours, freq="h", tz="UTC")
     stored = {
         "city_name": "Lahore",
@@ -176,9 +172,7 @@ def _store_frame(hours):
 
 
 def test_load_feature_row_raises_when_lags_are_incomplete(monkeypatch):
-    """Fewer than 72 contiguous hours means the rolling features cannot be
-    computed for any row -- serving a forecast from NaN-padded features would be
-    worse than serving none."""
+    """Under 72 contiguous hours, no row has complete rolling features."""
     monkeypatch.setattr(fc, "read_features_df", lambda: _store_frame(10))
     with pytest.raises(fc.ForecastUnavailable, match="complete set of lag features"):
         fc.load_feature_row("Lahore")
@@ -193,8 +187,7 @@ def test_load_feature_row_returns_the_newest_complete_row(monkeypatch):
 
 
 def test_schema_drift_names_the_missing_columns(monkeypatch):
-    """The bug this module exists to prevent is training and serving disagreeing
-    on the feature set. If it happens anyway, say which columns."""
+    """If training and serving disagree on the feature set, say which columns."""
     frame = _store_frame(200).drop(columns=["pm10", "humidity"])
     monkeypatch.setattr(fc, "read_features_df", lambda: frame)
 

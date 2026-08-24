@@ -1,13 +1,7 @@
-"""SHAP feature-importance explanation for the deployed model.
+"""SHAP feature importance for the deployed model.
 
-Explains the model that is actually registered and served: HistGradientBoosting
-predicting the *change* in AQI, evaluated per horizon. The values below are
-therefore attributions on the delta, not on the AQI level -- a feature that
-pushes the delta up is a feature that makes air quality worse over the horizon.
-
-Earlier versions of this file explained a Random Forest predicting the absolute
-AQI. That model is no longer what runs (see docs/EXPERIMENT_LOG.md, Phase 4), so
-explaining it would have described a system nobody is using.
+Attributions are on the predicted *change* in AQI, not its level: a feature that
+pushes the delta up is one that makes air quality worse over the horizon.
 """
 
 import shap
@@ -26,8 +20,8 @@ load_dotenv()
 
 OUTPUT_PATH = "reports/shap_feature_importance.png"
 
-# SHAP on ~10k rows of a boosted ensemble is slow and adds nothing over a
-# sample: feature *ranking* stabilises long before the last few thousand rows.
+# Feature ranking stabilises long before the last few thousand rows, and SHAP on
+# a boosted ensemble is slow.
 MAX_EXPLAINED_ROWS = 2000
 
 

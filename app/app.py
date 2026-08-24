@@ -1,19 +1,15 @@
 """Streamlit dashboard: current AQI + 3-day forecast, with hazardous-AQI alerts.
 
-This file is presentation only. Every number it shows comes from
-serving/forecast.py -- either called in-process, or fetched from the FastAPI
-service when AQI_API_URL is set. Deliberately: the dashboard used to assemble
-features and apply the model itself, drifted out of step with the training
-pipeline, and served a stale model while looking healthy.
+Presentation only -- every number comes from serving/forecast.py, either
+in-process or over HTTP from the FastAPI service when AQI_API_URL is set.
 """
 
 import os
 import sys
 from pathlib import Path
 
-# `streamlit run app/app.py` puts this file's own folder on sys.path, not the
-# repo root, so sibling packages (serving, feature_pipeline, ...) wouldn't
-# otherwise resolve. Same fix as the EDA notebook's kernel-cwd issue.
+# `streamlit run app/app.py` puts this file's folder on sys.path, not the repo
+# root, so sibling packages would not otherwise resolve.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import plotly.graph_objects as go
@@ -33,11 +29,9 @@ from serving.forecast import (
 
 load_dotenv()
 
-# Set AQI_API_URL to read from the FastAPI service instead of loading the models
-# into the Streamlit process. Both paths return the same payload -- the service
-# calls the same serving/forecast.py functions -- so this is a deployment
-# choice, not a behavioural one: one process per concern when the API is running,
-# a single self-contained process when it is not.
+# Set AQI_API_URL to read from the FastAPI service instead of loading models into
+# the Streamlit process. Both paths return the same payload, so this is a
+# deployment choice rather than a behavioural one.
 API_URL = os.environ.get("AQI_API_URL", "").rstrip("/")
 API_TIMEOUT_SECONDS = 30
 
@@ -65,14 +59,14 @@ CARD_CSS = """
 @st.cache_resource
 def cached_models():
     """Cached as a resource, not data: model objects are not serialisable and
-    should be loaded once per process, not once per session."""
+    belong to the process, not the session."""
     return load_forecast_models(HORIZONS_HOURS)
 
 
 @st.cache_data(ttl=600)
 def fetch_payload(city_name):
-    """The forecast payload, from the API if one is configured, otherwise
-    computed here. TTL matches the hourly cadence of the feature pipeline."""
+    """Forecast payload, from the API if configured. TTL matches the hourly
+    cadence of the feature pipeline."""
     if API_URL:
         response = requests.get(f"{API_URL}/forecast", timeout=API_TIMEOUT_SECONDS)
         response.raise_for_status()
@@ -158,8 +152,7 @@ def main():
         return
 
     if payload["unavailable_horizons"]:
-        # Better a visibly missing horizon than a plausible-looking number
-        # produced with a guessed blend weight.
+        # A visibly missing horizon beats a plausible number from a guessed weight.
         st.error(
             "No blend weight is registered for the "
             + ", ".join(f"{h}h" for h in payload["unavailable_horizons"])

@@ -20,14 +20,10 @@ MAX_INSERT_ATTEMPTS = 3
 def build_feature_row(city_name, weather, pollution, previous_aqi=None):
     components = pollution["list"][0]["components"]
     aqi, dominant_pollutant, _ = compute_aqi(components)
-    # Floor to the hour. OpenWeather's "dt" is the observation calculation
-    # time (e.g. 11:19:16), but the backfill wrote hour-aligned timestamps
-    # taken from the hourly air-pollution history endpoint. Labels are built
-    # by matching a row to the row at exactly t+24/48/72h
-    # (training_pipeline/data.py), so an unaligned timestamp can never match
-    # anything -- every live row we collected was silently unusable for
-    # training. Flooring also lets the (city_name, timestamp) primary key
-    # deduplicate two runs landing in the same hour.
+    # Floor to the hour. OpenWeather's "dt" is the observation time (11:19:16),
+    # while the backfill wrote hour-aligned timestamps; labels are built by
+    # matching t+24/48/72h exactly, so an unaligned row can never match one. It
+    # also lets the (city_name, timestamp) key deduplicate two runs in one hour.
     timestamp = datetime.fromtimestamp(weather["dt"], tz=timezone.utc).replace(
         minute=0, second=0, microsecond=0
     )
@@ -38,13 +34,9 @@ def build_feature_row(city_name, weather, pollution, previous_aqi=None):
         "hour": timestamp.hour,
         "day": timestamp.day,
         "month": timestamp.month,
-        # Explicit float() on every column the Feature Group expects as
-        # 'double': the live pipeline inserts a single row at a time, so if a
-        # pollutant reading happens to be a whole number (e.g. OpenWeather
-        # returns "no": 0 instead of 0.0), pandas infers that column as int64
-        # for this one-row DataFrame -- clashing with the 'double' schema
-        # locked in during the original multi-row backfill and failing the
-        # insert. Same root cause as the earlier "pressure" bug in backfill.py.
+        # Explicit float() on every 'double' column: with a single-row insert,
+        # pandas types a whole number (OpenWeather returns "no": 0) as int64 and
+        # the insert fails against the schema the backfill locked in.
         "temp": float(weather["main"]["temp"]),
         "feels_like": float(weather["main"]["feels_like"]),
         "humidity": weather["main"]["humidity"],
@@ -68,8 +60,9 @@ def build_feature_row(city_name, weather, pollution, previous_aqi=None):
 
 def get_previous_hour_aqi(lat, lon, api_key, observed_at):
     """AQI one hour before `observed_at`, recomputed from the pollution archive.
-    Returns None if that hour isn't published yet, in which case the caller
-    records a change rate of 0.0."""
+
+    Returns None if that hour is not published yet; the caller then records a
+    change rate of 0.0."""
     components = get_pollution_at(lat, lon, api_key, observed_at - timedelta(hours=1))
     if components is None:
         return None
@@ -86,18 +79,12 @@ def run():
     weather = get_weather(lat, lon, api_key)
     pollution = get_pollution(lat, lon, api_key)
 
-    # Change rate is defined against the immediately preceding hour, matching
-    # the backfill. If that hour is unavailable we record 0.0 rather than a
-    # delta spanning an arbitrary gap, which would hand the model a feature
-    # meaning something different than it did in training.
-    #
-    # The previous hour is recomputed from OpenWeather's pollution archive
-    # rather than read back from the feature store. Reading it from Hopsworks
-    # meant an Arrow Flight query on every hourly run, which failed outright
-    # once the feature group reached 49k rows -- and the hourly job should not
-    # depend on the feature store being queryable just to write to it. AQI is
-    # a deterministic function of the concentrations, so recomputing gives the
-    # identical value.
+    # Change rate is defined against the immediately preceding hour, matching the
+    # backfill; 0.0 if that hour is unavailable, rather than a delta spanning an
+    # arbitrary gap. The previous hour is recomputed from the pollution archive
+    # rather than read back from Hopsworks: the hourly job should not need the
+    # feature store to be queryable in order to write to it, and AQI is a
+    # deterministic function of the concentrations.
     observed_at = datetime.fromtimestamp(weather["dt"], tz=timezone.utc).replace(
         minute=0, second=0, microsecond=0
     )

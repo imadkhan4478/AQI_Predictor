@@ -1,14 +1,10 @@
-"""Offline smoke test of the slow paths, run without Hopsworks or Streamlit.
+"""Offline smoke test of the slow paths, without Hopsworks or Streamlit.
 
-The fast logic -- blend arithmetic, alert selection, API contract -- is covered
-properly by `pytest tests`. This script covers what a unit test should not: real
-model fits against a synthetic multi-year feature store, so SHAP and the
-walk-forward evaluation the daily job depends on are exercised end to end before
-a runner spends 20 minutes discovering they are broken.
+`pytest tests` covers the fast logic. This exercises what a unit test should not:
+real model fits against a synthetic multi-year feature store, so SHAP and the
+walk-forward evaluation are checked before a runner spends 20 minutes on them.
 
     python scripts/verify_serving_path.py
-
-Needs no credentials. Not imported by anything.
 """
 
 import json
@@ -69,8 +65,8 @@ STORE = synthetic_store()
 
 
 def install_stubs():
-    """Stub only what the sandbox lacks: Streamlit's decorators, Plotly, and the
-    Hopsworks client. Everything under test runs for real."""
+    """Stub Streamlit, Plotly and the Hopsworks client. Everything under test
+    runs for real."""
     streamlit = types.ModuleType("streamlit")
     streamlit.cache_data = lambda *a, **k: (lambda fn: fn)
     streamlit.cache_resource = lambda fn=None, **k: fn if fn else (lambda f: f)
@@ -176,8 +172,7 @@ def main():
     print("\n5. The daily job's walk-forward evaluation runs end to end")
     # Three years of synthetic history, because the evaluation needs 12 monthly
     # retrain origins each with >= MIN_TRAIN_ROWS of prior data behind it.
-    # data.py binds read_features_df by name at import time, so the swap has to
-    # happen on that module rather than on hopsworks_store.
+    # data.py binds read_features_df at import time, so swap it there.
     from training_pipeline import data as training_data
     from training_pipeline import register
 

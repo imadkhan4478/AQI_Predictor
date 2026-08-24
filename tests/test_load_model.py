@@ -1,9 +1,5 @@
-"""Tests for model loading against a substituted registry.
-
-The behaviour under test is version selection and blend-weight resolution, both
-of which have already failed in production: the registry's get_model() defaults
-to version 1 rather than the newest, and a registry write can leave a version
-whose metadata exists but whose files do not.
+"""Tests for version selection and blend-weight resolution, against a
+substituted registry.
 """
 
 import json
@@ -15,8 +11,8 @@ from app import load_model
 
 
 class StubVersion:
-    """One registered model version. `files` is what its download() directory
-    would contain; None means the download itself fails."""
+    """One registered version. `files` is its download directory; None means the
+    download fails."""
 
     def __init__(self, version, files, metrics=None):
         self.version = version
@@ -62,8 +58,8 @@ def version_dir(tmp_path, version, blend_weight=None, with_model=True):
 
 
 def test_picks_the_highest_version_not_the_first(registry, tmp_path):
-    """get_model()'s default of version 1 silently pinned the dashboard to the
-    very first model ever trained, ignoring every daily retrain."""
+    """get_model() defaults to version 1, which would pin the dashboard to the
+    first model ever trained."""
     registry["aqi_forecast_24h"] = [
         StubVersion(1, version_dir(tmp_path, 1, blend_weight=0.1)),
         StubVersion(3, version_dir(tmp_path, 3, blend_weight=0.5)),
@@ -76,8 +72,8 @@ def test_picks_the_highest_version_not_the_first(registry, tmp_path):
 
 
 def test_falls_back_when_the_newest_version_is_half_written(registry, tmp_path):
-    """A registry write that fails partway leaves a version with metadata and no
-    usable files. Serving the previous intact model beats refusing to start."""
+    """A write that fails partway leaves metadata with no usable files; serving
+    the previous intact model beats refusing to start."""
     broken = StubVersion(4, None)
     intact = StubVersion(3, version_dir(tmp_path, 3, blend_weight=0.5))
     registry["aqi_forecast_24h"] = [intact, broken]
@@ -100,8 +96,7 @@ def test_raises_when_nothing_is_registered(registry):
 
 
 def test_blend_json_beside_the_artifact_wins_over_registry_metrics(registry, tmp_path):
-    """blend.json travels with the model file and cannot drift from it; the
-    registry metric is only a fallback for models registered before it existed."""
+    """blend.json travels with the model file and cannot drift from it."""
     registry["aqi_forecast_24h"] = [
         StubVersion(1, version_dir(tmp_path, 1, blend_weight=0.65), metrics={"blend_weight": 0.4})
     ]
@@ -118,16 +113,14 @@ def test_falls_back_to_registry_metrics_when_blend_json_is_absent(registry, tmp_
 
 
 def test_missing_weight_stays_none(registry, tmp_path):
-    """Never 1.0 by default: that is the unshrunk model, which loses to
-    persistence at every horizon."""
+    """Never 1.0 by default -- that is the unshrunk model."""
     registry["aqi_forecast_24h"] = [StubVersion(1, version_dir(tmp_path, 1), metrics={})]
     *_, blend_weight = load_model.load_latest_model("aqi_forecast_24h")
     assert blend_weight is None
 
 
 def test_corrupt_blend_json_does_not_take_down_the_loader(registry, tmp_path):
-    """A truncated upload is the failure mode this whole path exists for, so a
-    malformed blend.json must not raise -- the horizon is withheld instead."""
+    """A truncated upload must not raise; the horizon is withheld instead."""
     directory = tmp_path / "corrupt"
     directory.mkdir()
     (directory / "model.pkl").write_bytes(b"stub")

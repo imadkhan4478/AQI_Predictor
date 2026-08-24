@@ -1,11 +1,8 @@
-"""Register one forecast model per horizon (24h/48h/72h), so the dashboard can
-show a real day-by-day 3-day forecast rather than a single far-off number.
+"""Register one forecast model per horizon (24h/48h/72h).
 
-This is the entry point the daily GitHub Actions job runs. Each horizon is
-trained, walk-forward evaluated, given its own blend weight and registered
-independently -- deliberately, because the earlier shortcut of running the
-bake-off once at 72h and assuming the winner generalised to 24h and 48h chose
-the wrong model for all three. See docs/EXPERIMENT_LOG.md, Phase 3-4.
+Entry point for the daily GitHub Actions job. Each horizon is trained, evaluated
+and weighted independently: running the bake-off once at 72h and assuming the
+winner generalised chose the wrong model for all three.
 """
 
 from dotenv import load_dotenv

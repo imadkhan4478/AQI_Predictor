@@ -1,7 +1,6 @@
-"""Compare every candidate model against the naive baseline, and record the result.
+"""Compare every candidate model against the naive baseline.
 
-Results are written to reports/ rather than only printed. A comparison that
-exists solely in a terminal that has since been closed is not evidence.
+Results are written to reports/ rather than only printed.
 """
 
 import json
@@ -19,10 +18,8 @@ from training_pipeline.baseline_models import (
 from training_pipeline.data import DELTA_COLUMN, load_training_data, time_based_split
 from training_pipeline.evaluate import evaluate
 
-# TensorFlow lives in requirements-deep.txt, not requirements.txt: it cannot be
-# resolved alongside hopsworks in one pip pass (see that file). Imported
-# optionally so the comparison still runs -- minus the neural net, and saying so
-# -- in the core environment CI and the deployed system use.
+# TensorFlow lives in requirements-deep.txt: it cannot be resolved alongside
+# hopsworks in one pip pass. Optional so the comparison still runs without it.
 try:
     from training_pipeline.deep_model import train_and_predict as train_predict_nn
 except ImportError:  # pragma: no cover - depends on the installed environment
@@ -47,8 +44,8 @@ def run(horizons=HORIZONS_HOURS):
     all_results = {}
 
     for horizon_hours in horizons:
-        # Every candidate predicts the CHANGE in AQI; predictions are anchored
-        # to the latest reading so they are directly comparable to persistence.
+        # Every candidate predicts the CHANGE in AQI, anchored to the latest
+        # reading so the numbers are directly comparable to persistence.
         X, y_delta, timestamps, current_aqi = load_training_data(horizon_hours, target=DELTA_COLUMN)
         X_train, X_test, y_train, y_test = time_based_split(X, y_delta, timestamps, horizon_hours)
 
@@ -63,8 +60,8 @@ def run(horizons=HORIZONS_HOURS):
         if train_predict_nn is not None:
             candidates["NeuralNet"] = train_predict_nn
         else:
-            # Announced rather than silently omitted: a comparison table with a
-            # row quietly missing is worse than one that says why.
+            # Announced, not silently omitted: a table with a row missing is
+            # worse than one that says why.
             print("NeuralNet skipped -- TensorFlow not installed (pip install -r requirements-deep.txt)")
 
         results = {

@@ -1,19 +1,12 @@
-"""Train the forecast model for one horizon and register it in Hopsworks.
+"""Train and register the forecast model for one horizon.
 
 The deployed forecast is an anchored blend, not a raw model output:
 
     prediction = current_aqi + blend_weight * predicted_delta
 
-The model learns the *change* in AQI rather than its level, and the prediction
-is anchored to the latest reading. blend_weight = 0 is exactly the persistence
-baseline; 1 is the unshrunk model. Fitting the weight on a validation slice
-lets the model contribute only as much as it has earned.
-
-This is a plain algebraic rearrangement of averaging the model with persistence:
-    (1-w)*aqi + w*(aqi + delta)  ==  aqi + w*delta
-
-It matters because persistence is a strong baseline for air quality (R2 0.814 at
-24h) that no standalone model tried here beat. The blend does, at every horizon.
+which is algebraically the average of the model with a persistence baseline:
+(1-w)*aqi + w*(aqi + delta) == aqi + w*delta. Persistence is strong enough here
+(R2 0.814 at 24h) that no standalone model beat it; the blend does.
 """
 
 import json
@@ -34,41 +27,27 @@ from training_pipeline.evaluate import evaluate
 
 load_dotenv()
 
-# Candidate shrinkage weights. A fixed 0.5 scored within 0.005 of the tuned
-# value in walk-forward testing, so the exact choice is not delicate.
+# A fixed 0.5 scored within 0.005 of the tuned value, so the choice is not
+# delicate -- but it is cheap to fit.
 BLEND_WEIGHTS = np.linspace(0.0, 1.0, 21)
 
-# Retrain origins for evaluation. Monthly rather than daily purely for cost:
-# 12 refits per horizon approximates daily retraining closely enough while
-# keeping the daily CI job to a few minutes.
+# Monthly rather than daily purely for cost: 12 refits per horizon approximate
+# daily retraining closely enough to keep the CI job to a few minutes.
 EVALUATION_ORIGINS = 12
 MIN_TRAIN_ROWS = 2000
 
-# The registry write is retried like every other Hopsworks call in this project.
-# It was the one that wasn't, and it is where the daily job broke: uploading the
-# 72h artifact returned HTTP 500 / errorCode 110043 from Hopsworks' own
-# filesystem metadata layer --
-#
-#   com.mysql.clusterj.ClusterJDatastoreException: code 626, Tuple did not exist
-#     at org.apache.hadoop.hdfs.server.namenode.FSDirDeleteOp
-#
-# -- after model.pkl and blend.json had already uploaded, failing on
-# input_example.json. Server-side race in a delete, not a client error: the same
-# code path had succeeded for the 24h and 48h models minutes earlier in the same
-# run. Nothing to fix locally; the correct response is to try again.
+# Hopsworks occasionally returns a 500 from its own metadata layer mid-upload.
 MAX_REGISTER_ATTEMPTS = 3
 
 
 def walk_forward_evaluate(X, y_delta, timestamps, current_aqi, horizon_hours):
-    """Evaluate the way the system actually runs: retrain at successive origins
-    and score only the following month's forecasts.
+    """Evaluate the way the system runs: retrain at successive monthly origins
+    and score only the following month.
 
-    A single frozen train/test split measures something production never does --
-    predicting up to a year ahead from a stale model. Against a pollution level
-    that has fallen ~58% since 2020, that mostly scores the model on its
-    inability to track a multi-year trend. Measured both ways at 24h, the same
-    model scores 0.738 frozen and 0.831 walk-forward; the daily-retraining
-    pipeline behaves like the latter.
+    A single frozen split measures something production never does -- predicting
+    a year ahead from a stale model -- and against a pollution level that has
+    fallen ~58% since 2020 it mostly scores the model on its inability to track a
+    multi-year trend. The same model scores 0.738 frozen and 0.831 walk-forward.
 
     Returns (metrics_at_best_weight, persistence_metrics, best_weight).
     """
@@ -133,19 +112,16 @@ def run(horizon_hours=FORECAST_HORIZON_HOURS):
     print(f"  persistence : R2={baseline['R2']:.3f} MAE={baseline['MAE']:.1f} RMSE={baseline['RMSE']:.1f}")
     print(f"  beats persistence: {metrics['R2'] > baseline['R2']}")
 
-    # The deployed artifact is refit on every row, including validation and
-    # test. The held-out split above already established what it is worth; the
-    # shipped model should then learn from as much data as exists. The blend
-    # weight is kept from validation rather than refitted on data now used for
-    # training.
+    # Refit on every row: the evaluation above already established what the model
+    # is worth, so the shipped artifact should learn from all available data. The
+    # blend weight stays as validated rather than refitted on training data.
     final_model = build_gradient_boosting()
     final_model.fit(X, y_delta)
 
     model_dir = tempfile.mkdtemp()
     try:
         joblib.dump(final_model, os.path.join(model_dir, "model.pkl"))
-        # Written alongside the artifact so inference cannot silently fall back
-        # to a default weight if registry metadata is unavailable.
+        # Beside the artifact so inference cannot fall back to a default weight.
         with open(os.path.join(model_dir, "blend.json"), "w", encoding="utf-8") as handle:
             json.dump({"blend_weight": float(blend_weight), "horizon_hours": horizon_hours}, handle)
 
@@ -162,12 +138,8 @@ def run(horizon_hours=FORECAST_HORIZON_HOURS):
             f"Held-out R2={metrics['R2']:.3f} vs persistence R2={baseline['R2']:.3f}."
         )
 
-        # create_model and save() are retried together. Retrying save() alone
-        # would reuse a version whose upload is already half-written; a fresh
-        # create_model takes the next version number, so each attempt starts
-        # clean. A failed attempt can leave an incomplete version behind, which
-        # is why app/load_model.py walks versions downwards until one loads
-        # rather than trusting the highest to be intact.
+        # Retried together: save() alone would reuse a version whose upload is
+        # already half-written, while a fresh create_model takes the next number.
         for attempt in range(1, MAX_REGISTER_ATTEMPTS + 1):
             try:
                 registered = mr.python.create_model(
@@ -179,7 +151,7 @@ def run(horizon_hours=FORECAST_HORIZON_HOURS):
                 registered.save(model_dir)
                 print(f"  registered '{model_name}' version {registered.version}")
                 break
-            except Exception as error:  # hsml surfaces server faults as RestAPIError and OSError alike
+            except Exception as error:  # hsml raises RestAPIError and OSError alike
                 if attempt == MAX_REGISTER_ATTEMPTS:
                     raise
                 wait_seconds = attempt * 15

@@ -3,12 +3,9 @@
 import tensorflow as tf
 from sklearn.preprocessing import StandardScaler
 
-# Same seed as the sklearn models, set through Keras' one-call helper so
-# Python's `random`, NumPy and TensorFlow are all covered -- seeding only
-# tf.random leaves weight initialisers and the shuffle order free to vary.
-# Without this, two runs of the comparison in train.py disagree on this row by
-# more than the gaps it is meant to measure, and there is no way to tell a real
-# improvement from noise.
+# Set via Keras' helper so Python's `random`, NumPy and TensorFlow are all
+# covered; seeding tf.random alone leaves initialisers free to vary, and two runs
+# then differ by more than the gaps the comparison is measuring.
 RANDOM_SEED = 42
 
 

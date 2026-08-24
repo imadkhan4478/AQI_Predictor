@@ -1,20 +1,6 @@
-"""FastAPI service exposing the registered AQI forecast over HTTP.
+"""FastAPI service exposing the registered AQI forecast.
 
-Run locally:
-
-    uvicorn api.main:app --reload
-
-Interactive docs at /docs, generated from the response models below.
-
-Why an API at all, when Streamlit could load the model itself: it separates
-"produce the forecast" from "draw the forecast". The dashboard becomes one
-client among several, the JSON is consumable by anything, and the expensive part
--- a Hopsworks login and three model downloads -- happens once per process
-instead of once per browser session.
-
-Nothing here computes a forecast. All of that lives in serving/forecast.py,
-shared with the dashboard, because two independent copies of the feature
-assembly is precisely the bug this project already shipped once.
+    uvicorn api.main:app --reload      # docs at /docs
 """
 
 import os
@@ -37,20 +23,18 @@ from serving.forecast import (
 
 load_dotenv()
 
-# The feature store gains one row per hour, so re-reading it more often than
-# that cannot produce new information -- and it is a multi-second Arrow Flight
-# transfer. Ten minutes keeps the dashboard responsive without hammering it.
+# The feature store gains one row per hour, so re-reading more often than that
+# cannot produce new information.
 FEATURE_CACHE_SECONDS = 600
 
 app = FastAPI(
     title="AQI Predictor API",
     version="1.0.0",
     description=(
-        "3-day Air Quality Index forecast for a single city, served from models "
-        "registered in the Hopsworks Model Registry. Each model predicts the "
-        "*change* in AQI; the forecast returned is `current_aqi + blend_weight * "
-        "predicted_delta`, which is algebraically a blend of the model with a "
-        "persistence baseline."
+        "3-day Air Quality Index forecast, served from models registered in the "
+        "Hopsworks Model Registry. Each model predicts the *change* in AQI; the "
+        "forecast returned is `current_aqi + blend_weight * predicted_delta`, "
+        "which is algebraically a blend of the model with a persistence baseline."
     ),
 )
 
@@ -71,11 +55,11 @@ class ForecastPoint(BaseModel):
     category: str = Field(..., examples=["Unhealthy"])
     severity: Optional[str] = None
     color: str = Field(..., examples=["#ff0000"])
-    model_version: int = Field(..., description="Registry version actually used", examples=[7])
+    model_version: int = Field(..., description="Registry version used", examples=[7])
     blend_weight: float = Field(
         ...,
-        description="0 would be the naive persistence baseline; 1 the unshrunk model",
-        examples=[0.5],
+        description="0 is the persistence baseline; 1 the unshrunk model",
+        examples=[0.35],
     )
 
 
@@ -94,10 +78,7 @@ class ForecastResponse(BaseModel):
     forecast: list[ForecastPoint]
     unavailable_horizons: list[int] = Field(
         default_factory=list,
-        description=(
-            "Horizons withheld because no blend weight is registered for them. A "
-            "forecast is never produced with a guessed weight."
-        ),
+        description="Horizons withheld because no blend weight is registered for them",
     )
     alert: Optional[Alert] = None
 
@@ -124,12 +105,10 @@ class HealthResponse(BaseModel):
 
 
 class _Cache:
-    """Process-wide cache. A Hopsworks login plus three model downloads takes
-    tens of seconds, so it happens once, lazily, guarded by a lock.
+    """Process-wide cache for the models and the latest feature row.
 
-    Lazily rather than at startup on purpose: loading in a startup hook means a
-    transient Hopsworks outage stops the service from booting at all, instead of
-    degrading a single request that can be retried.
+    Populated lazily rather than at startup so a transient Hopsworks outage
+    degrades one retryable request instead of stopping the service from booting.
     """
 
     def __init__(self):
@@ -172,13 +151,13 @@ def _city_name():
 
 
 def _payload():
-    """Shared by /forecast and /current so both see identical numbers."""
+    """Shared by /forecast and /current so both report identical numbers."""
     city = _city_name()
     try:
         return build_forecast(city, CACHE.get_models(), CACHE.get_feature_row(city))
     except ForecastUnavailable as error:
-        # 503 rather than 500: the service is fine, the data it needs is not yet
-        # there, and a retry later is the correct client behaviour.
+        # 503, not 500: the service is fine, the data isn't there yet, and a
+        # retry is the correct client behaviour.
         raise HTTPException(status_code=503, detail=str(error)) from error
     except ConnectionError as error:
         raise HTTPException(
@@ -188,8 +167,8 @@ def _payload():
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])
 def health():
-    """Cheap liveness check -- reports cached state without touching Hopsworks,
-    so an orchestrator polling it cannot itself cause load."""
+    """Liveness check. Reports cached state without contacting Hopsworks, so
+    polling it cannot itself generate load."""
     loaded = sorted(CACHE.models) if CACHE.models else []
     return {
         "status": "ok" if loaded and CACHE.feature_row is not None else "starting",
@@ -201,7 +180,7 @@ def health():
 
 @app.get("/current", response_model=CurrentResponse, tags=["forecast"])
 def current():
-    """The latest observed AQI, with its EPA category and dominant pollutant."""
+    """Latest observed AQI, with its EPA category and dominant pollutant."""
     payload = _payload()
     return {
         "city": payload["city"],
@@ -219,8 +198,7 @@ def forecast():
 
 @app.get("/models", response_model=list[ModelInfo], tags=["meta"])
 def models():
-    """Which registry version is serving each horizon, with its held-out metrics
-    and blend weight. Useful for confirming the daily retrain is landing."""
+    """Registry version, held-out metrics and blend weight per horizon."""
     try:
         return model_details(CACHE.get_models())
     except ConnectionError as error:

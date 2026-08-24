@@ -35,9 +35,8 @@ MAX_READ_ATTEMPTS = 3
 
 
 def _read_with_retry(query, description):
-    """Feature-store reads go over Arrow Flight (gRPC), which drops connections
-    intermittently -- especially on larger transfers. These are transient, so
-    retry before giving up and failing the whole pipeline run."""
+    """Arrow Flight drops connections intermittently on larger transfers. These
+    are transient, so retry before failing the run."""
     last_error = None
     for attempt in range(1, MAX_READ_ATTEMPTS + 1):
         try:
@@ -57,10 +56,9 @@ def _read_with_retry(query, description):
 
 
 def read_features_df():
-    """Read all rows currently stored in the feature group as a pandas DataFrame.
+    """All rows in the feature group, as a DataFrame.
 
-    Only for training and analysis, which genuinely need the full history. The
-    hourly pipeline must not call this -- see get_aqi_at below.
+    For training and analysis only; the hourly pipeline must not call this.
     """
     fg = get_feature_group()
     return _read_with_retry(fg.read, "Full feature-group read")
@@ -69,22 +67,10 @@ def read_features_df():
 def get_aqi_at(city_name, timestamp):
     """AQI recorded for this city at exactly `timestamp`, or None if absent.
 
-    Callers use this to build aqi_change_rate against the immediately
-    preceding hour. Returning None for a missing hour (rather than falling
-    back to whatever row happened to be latest) keeps the feature meaning the
-    same in production as it does in the backfill, where rows are contiguous.
-
-    Note the narrow except: a genuinely empty feature group is expected on a
-    fresh feature-group version, but an auth or permission failure must not be
-    silently converted into "no previous reading" -- that would write a wrong
-    change rate into the store with no error surfaced anywhere.
-
-    Pushes the filter down to the feature store rather than reading everything
-    and filtering in pandas. Downloading the whole group to look up one value
-    is O(total rows) every hour: at 2k rows that was merely wasteful, but after
-    backfilling to 49k it started dropping the Arrow Flight connection
-    mid-transfer (FlightUnavailableError: Socket closed) and failed roughly a
-    quarter of hourly runs.
+    Returns None for a missing hour rather than falling back to the latest row,
+    so aqi_change_rate means the same thing in production as in the backfill.
+    The narrow except matters: an empty feature group is expected on a fresh
+    version, but an auth failure must not become "no previous reading".
     """
     fg = get_feature_group()
     query = fg.select(["timestamp", "aqi"]).filter(
@@ -103,8 +89,7 @@ def get_aqi_at(city_name, timestamp):
 
 
 def _is_empty_feature_group(error):
-    """Hopsworks raises a generic RestAPIError when a feature group exists but
-    has no materialised data yet, which is a normal state right after creating
-    a new feature group version."""
+    """Hopsworks raises a generic RestAPIError for a feature group that exists but
+    has no materialised data yet -- normal for a fresh version."""
     message = str(error).lower()
     return "no data" in message or "not found" in message or "empty" in message

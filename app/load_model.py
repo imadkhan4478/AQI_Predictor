@@ -1,4 +1,4 @@
-"""Load the latest registered forecast model(s) from the Hopsworks Model Registry."""
+"""Load registered forecast models from the Hopsworks Model Registry."""
 
 import json
 import os
@@ -8,22 +8,18 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import hopsworks
 import joblib
 
-# hopsworks.login() has no timeout parameter of its own -- on a flaky
-# connection it can hang for 20+ minutes relying on the OS's default socket
-# timeout. We can't change that internal timeout, so instead we run the call
-# in a background thread and impose our own wait limit on top of it.
-#
-# IMPORTANT: don't use the executor as a context manager here -- `with
-# ThreadPoolExecutor() as executor:` calls shutdown(wait=True) on exit, which
-# blocks until the background thread actually finishes, silently undoing the
-# timeout we just imposed. We shut down with wait=False instead: the thread
-# itself can't be forcibly killed (it keeps running until it finishes or the
-# process exits), but the caller stops waiting on it and moves on to retry.
 CONNECT_TIMEOUT_SECONDS = 20
 MAX_CONNECT_ATTEMPTS = 3
 
 
 def _connect():
+    """Log in to Hopsworks with a client-side timeout.
+
+    hopsworks.login() has no timeout of its own and can hang for 20+ minutes on
+    the OS socket default, so it runs in a thread we stop waiting on. The
+    executor is shut down with wait=False deliberately: wait=True blocks until
+    the hung thread finishes, undoing the timeout.
+    """
     kwargs = dict(
         project=os.environ["HOPSWORKS_PROJECT_NAME"],
         api_key_value=os.environ["HOPSWORKS_API_KEY"],
@@ -54,17 +50,11 @@ def _connect():
 
 
 def _read_blend_weight(local_dir, metrics):
-    """The scalar `w` in `prediction = current_aqi + w * predicted_delta`.
+    """The scalar w in `current_aqi + w * predicted_delta`.
 
-    Preferred source is blend.json, written next to the artifact by
-    training_pipeline/register.py, because it travels with the model file and
-    cannot drift from it. Registry metrics are the fallback for models
-    registered before blend.json existed.
-
-    Deliberately no numeric default: w silently defaulting to 1.0 would ship an
-    unshrunk model that loses to the naive baseline at every horizon, and it
-    would look like a working forecast. Returning None makes the caller decide
-    visibly instead.
+    Prefers blend.json beside the artifact, since it travels with the model file;
+    registry metrics are the fallback. Returns None rather than a default, so a
+    missing weight surfaces as a withheld horizon instead of an unshrunk model.
     """
     blend_path = os.path.join(local_dir, "blend.json")
     if os.path.exists(blend_path):
@@ -74,10 +64,8 @@ def _read_blend_weight(local_dir, metrics):
             if weight is not None:
                 return float(weight)
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as error:
-            # A truncated or malformed blend.json is exactly what a failed
-            # upload leaves behind, so it must not raise here. Fall through to
-            # the registry metric, and ultimately to None -- a withheld horizon
-            # the dashboard reports, rather than a crash on load.
+            # A truncated blend.json is what a failed upload leaves behind, so it
+            # must not raise here.
             print(
                 f"Ignoring unreadable {blend_path} ({type(error).__name__}); "
                 "falling back to registry metrics.",
@@ -89,23 +77,12 @@ def _read_blend_weight(local_dir, metrics):
 
 
 def load_latest_model(model_name):
-    """Fetch the newest *usable* version of a registered model.
+    """Newest usable version, as (model, version, metrics, blend_weight).
 
-    Returns (model, version, metrics, blend_weight). The model predicts the
-    *change* in AQI, not its level, so blend_weight is not optional
-    bookkeeping -- without it the caller cannot turn the output into a forecast.
-
-    Walks versions from highest downwards instead of trusting the highest,
-    because a registry write can fail partway through and leave a version whose
-    metadata row exists but whose files do not. That happened for real: an
-    upload returned HTTP 500 from Hopsworks' filesystem metadata layer after
-    model.pkl had landed but before the schema did. Serving last week's intact
-    model is correct behaviour; refusing to start because the newest version is
-    half-written is not.
-
-    NOTE: get_model()'s version=None default actually means version 1, not
-    "latest" -- so once daily retraining is producing new versions, the version
-    must be chosen explicitly.
+    Walks versions downwards rather than trusting the highest, because a failed
+    registry write can leave a version whose metadata exists but whose files do
+    not. Note that get_model()'s version=None default means version 1, not the
+    latest, so the version is always chosen explicitly.
     """
     project = _connect()
     mr = project.get_model_registry()

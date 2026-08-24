@@ -1,0 +1,31 @@
+name: Tests
+
+# The pipelines are scheduled jobs whose failures show up hours later, so the
+# fast checks run on every push instead. No secrets are needed: the test suite
+# substitutes the feature store and the registry rather than reaching them.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Lint for unused imports and undefined names
+        run: |
+          pip install pyflakes==3.4.0
+          python -m pyflakes api app backfill feature_pipeline serving training_pipeline tests
+
+      - name: Run tests
+        run: python -m pytest tests -q

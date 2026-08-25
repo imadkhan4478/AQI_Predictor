@@ -838,6 +838,31 @@ Two responses:
    already in memory. Halving the number of transfers on the least reliable step
    in the pipeline is worth more than the code it saved.
 
+### The read optimisation broke ARIMA, and nothing caught it
+
+Building the AQI series from data already in memory (above) ended with
+`.dropna()`, which leaves holes wherever an hour is missing. Every other
+candidate takes independent rows and does not care. ARIMA is extended
+incrementally with `append(..., refit=False)`, and statsmodels requires each
+block to continue exactly where the model's data ends:
+
+```
+ValueError: Given `endog` does not have an index that extends the index of the model.
+```
+
+The series is now reindexed onto a complete hourly range and interpolated in
+both directions, and the origin loop is driven by the model's own last
+observation rather than a precomputed date range, so the two cannot drift apart.
+
+Worth recording honestly: the end-to-end ARIMA check had been run *before* the
+read optimisation and not after, so a change to how the series was built went out
+untested against the one model that depends on its shape. The regression tests in
+`tests/test_statistical_model.py` now cover exactly that — a series with holes,
+both deployed horizons, and a check that the forecast actually advances with the
+origin rather than repeating one value across the whole test set.
+
+Tests: 66 → 72.
+
 ---
 
 ## Open items

@@ -142,7 +142,8 @@ hurt.
 - `app/` — Streamlit dashboard
 - `notebooks/01_eda.ipynb` — exploratory analysis over the full 5.7 years, with the
   decision each finding drove
-- `tests/` — 66 tests: the AQI calculation, the blend arithmetic, model loading, and the API contract
+- `tests/` — 72 tests: the AQI calculation, the blend arithmetic, model loading, the ARIMA
+  baseline, and the API contract
 - `docs/ARCHITECTURE.md` — how the pieces fit together, and the conventions that are
   load-bearing rather than stylistic
 - `docs/EXPERIMENT_LOG.md` — **the running record of what was tried, what failed and
@@ -179,7 +180,7 @@ python -m training_pipeline.register_forecast_models   # train + register 24/48/
 python -m training_pipeline.explain             # regenerate the SHAP plot
 uvicorn api.main:app --reload                   # JSON API + /docs
 streamlit run app/app.py                        # dashboard
-pytest                                          # 66 tests, no credentials needed
+pytest                                          # 72 tests, no credentials needed
 ```
 
 Bulk operations are best run through **Actions → workflow_dispatch** rather than

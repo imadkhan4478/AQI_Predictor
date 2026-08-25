@@ -38,28 +38,30 @@ def predict_delta(context):
     fit_start = train_end - pd.Timedelta(hours=TRAILING_FIT_HOURS)
     fitted = ARIMA(series.loc[fit_start:train_end], order=ARIMA_ORDER).fit()
 
-    # One forecast per origin, then mapped onto the test rows it covers.
-    origins = pd.date_range(
-        start=train_end,
-        end=test_timestamps.max(),
-        freq=f"{ORIGIN_STRIDE_HOURS}h",
-    )
-    predicted_at_origin = pd.Series(index=origins, dtype=float)
+    # One forecast per origin, then mapped onto the test rows it covers. The
+    # origin is always the model's own last observation, so each appended block
+    # continues exactly where the previous one stopped.
+    step = pd.Timedelta(hours=ORIGIN_STRIDE_HOURS)
+    last_test_timestamp = test_timestamps.max()
+    predicted_at_origin = {}
+    origin = train_end
 
-    for origin in origins:
-        forecast = fitted.forecast(steps=horizon_hours)
-        predicted_at_origin.loc[origin] = forecast.iloc[-1]
+    while origin <= last_test_timestamp:
+        predicted_at_origin[origin] = float(fitted.forecast(steps=horizon_hours).iloc[-1])
 
-        next_origin = origin + pd.Timedelta(hours=ORIGIN_STRIDE_HOURS)
-        observed = series.loc[origin + pd.Timedelta(hours=1) : next_origin]
+        observed = series.loc[origin + pd.Timedelta(hours=1) : origin + step]
         if observed.empty:
             break
         fitted = fitted.append(observed, refit=False)
+        origin = observed.index[-1]
 
     # Each test row takes the forecast from the most recent origin at or before it.
-    predicted_absolute = predicted_at_origin.reindex(
-        test_timestamps, method="ffill"
-    ).to_numpy(dtype=float)
+    predicted_absolute = (
+        pd.Series(predicted_at_origin)
+        .sort_index()
+        .reindex(test_timestamps, method="ffill")
+        .to_numpy(dtype=float)
+    )
 
     # Returned as a delta so it is directly comparable with the feature-based
     # models, which all predict the change from the latest reading.

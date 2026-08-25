@@ -61,15 +61,20 @@ def run(horizons=HORIZONS_HOURS):
         truth = anchor + np.asarray(y_test, dtype=float)
 
         # ARIMA needs one continuous evenly-spaced series rather than independent
-        # rows. Built from the data already in memory: re-reading the feature
-        # group per horizon meant six full transfers per run, and the read is
-        # the least reliable step in the pipeline.
+        # rows, built from the data already in memory: re-reading the feature
+        # group per horizon meant six full transfers per run, and the read is the
+        # least reliable step in the pipeline.
+        #
+        # Reindexed onto a complete hourly range and interpolated in both
+        # directions, so the result has no holes. A series with gaps cannot be
+        # extended incrementally -- ARIMA requires each appended block to
+        # continue exactly where the model's data ends.
+        hourly_index = pd.date_range(timestamps.min(), timestamps.max(), freq="h")
         aqi_series = (
             pd.Series(np.asarray(current_aqi, dtype=float), index=timestamps)
             .sort_index()
-            .asfreq("h")
-            .interpolate()
-            .dropna()
+            .reindex(hourly_index)
+            .interpolate(limit_direction="both")
         )
 
         # One context passed to every candidate, so models needing a continuous

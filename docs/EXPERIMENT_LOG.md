@@ -863,6 +863,67 @@ origin rather than repeating one value across the whole test set.
 
 Tests: 66 → 72.
 
+### The full comparison, finally measured on 46k rows
+
+`reports/model_comparison.json`, produced by the Analysis workflow on a runner.
+Frozen purged split, all three metrics, every candidate anchored to the latest
+reading so the numbers are directly comparable:
+
+| Model | R² 24h | R² 48h | R² 72h |
+|---|---|---|---|
+| **Persistence** | **0.808** | **0.704** | **0.622** |
+| ARIMA | 0.778 | 0.669 | 0.590 |
+| Neural net (Keras MLP) | 0.730 | 0.627 | 0.576 |
+| HistGradientBoosting | 0.731 | 0.488 | 0.517 |
+| Random Forest | 0.700 | 0.489 | 0.504 |
+| Ridge | 0.676 | 0.520 | 0.503 |
+
+Three things fall out of this table, and none of them were visible before.
+
+**ARIMA beats every feature-based model at every horizon.** A model that sees
+nothing but AQI's own past outperforms all 33 engineered features under a frozen
+split. The features are not worthless — the walk-forward results show they earn
+their place once the model is retrained daily — but their contribution over plain
+autocorrelation is zero when the model is allowed to go stale. This is the
+strongest single argument for why daily retraining is not a checkbox from the
+brief but the thing that makes the features pay.
+
+Worth recording that this model was *orphaned code* until this phase: the file
+existed, nothing called it, and its signature no longer matched the data API. The
+second-best model in the project was sitting unreachable in the repo.
+
+**The neural net went from worst to mid-table on the same architecture.** It scored
+−1.16 at 2,065 rows and was written off as "far too little data". At 46k rows it
+beats Random Forest and Ridge at 48h and 72h. Nothing about the model changed.
+
+**Every standalone candidate still loses to persistence.** Six models, three
+horizons, eighteen comparisons, zero wins. That is the result the blend exists to
+answer, and it is why the deployed forecast is `current_aqi + w · predicted_delta`
+rather than any single model's output.
+
+### Being precise about where the deployed gain is
+
+The blend beats persistence on R² and RMSE at all three horizons, but the MAE
+column is less flattering and belongs in the report rather than out of it:
+
+| Horizon | RMSE blend / persistence | MAE blend / persistence |
+|---|---|---|
+| 24h | 48.4 / 50.8 | 30.2 / **29.8** |
+| 48h | 59.0 / 63.5 | 38.9 / 39.0 |
+| 72h | 62.4 / 71.2 | 42.9 / 44.0 |
+
+RMSE improves by 2.4, 4.5 and 8.8 points as the horizon grows; MAE is marginally
+*worse* at 24h. The blend suppresses large errors while leaving typical error
+roughly unchanged at short range — which is the right trade for a hazard alert,
+where the expensive mistake is missing a spike, not being 3 points off on a calm
+day. Stated the other way: 0.832 R² at 24h is not 0.832 of skill, since 0.808 is
+free from persistence.
+
+Also logged from the run: statsmodels emits `ConvergenceWarning: Maximum
+Likelihood optimization failed to converge` for ARIMA(2,1,2) at the longer
+horizons. The forecasts are still usable and the ranking is stable, but it is a
+genuine limitation of the statistical baseline rather than something to omit.
+
 ---
 
 ## Open items

@@ -206,3 +206,33 @@ def test_model_details_excludes_the_model_object():
             "metrics": {"R2": 0.83, "MAE": 21.4},
         }
     ]
+
+
+class TestFeatureHistory:
+    """The bounded read is the fast path; the full read is the safety net."""
+
+    def test_bounded_read_is_used_when_it_returns_enough_rows(self, monkeypatch):
+        recent = pd.DataFrame({"city_name": ["Lahore"] * fc.MIN_HISTORY_ROWS})
+        monkeypatch.setattr(fc, "read_recent_features_df", lambda city: recent)
+        monkeypatch.setattr(fc, "read_features_df", _must_not_be_called)
+        assert len(fc.load_feature_history("Lahore")) == fc.MIN_HISTORY_ROWS
+
+    def test_short_bounded_read_falls_back_to_full_history(self, monkeypatch):
+        """Happens when the offline store has fallen behind the lookback window."""
+        monkeypatch.setattr(
+            fc, "read_recent_features_df", lambda city: pd.DataFrame({"city_name": ["Lahore"]})
+        )
+        monkeypatch.setattr(fc, "read_features_df", lambda: pd.DataFrame({"city_name": ["full"]}))
+        assert fc.load_feature_history("Lahore")["city_name"].tolist() == ["full"]
+
+    def test_failed_bounded_read_falls_back_to_full_history(self, monkeypatch):
+        def boom(city):
+            raise ConnectionError("Flight unavailable")
+
+        monkeypatch.setattr(fc, "read_recent_features_df", boom)
+        monkeypatch.setattr(fc, "read_features_df", lambda: pd.DataFrame({"city_name": ["full"]}))
+        assert fc.load_feature_history("Lahore")["city_name"].tolist() == ["full"]
+
+
+def _must_not_be_called():
+    raise AssertionError("full feature-group read should not happen on the fast path")

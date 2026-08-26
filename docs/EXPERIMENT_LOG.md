@@ -986,8 +986,108 @@ hard to beat.
 
 ---
 
+## Phase 6 — The dashboard was eleven days stale (2026-08-26)
+
+### 6.1 How it was found
+
+Not by an alert. By reading the deployed dashboard as a stranger would, while
+reviewing three classmates' submissions for comparison. The hero card said
+
+> As of 2026-08-15T02:00:00+00:00
+
+directly under a caption reading *"data refreshed hourly"*. Eleven days apart.
+The same date had shown up independently in the EDA run, and had been read as
+"the end of the dataset" rather than as "the data stopped".
+
+Every monitoring surface said the system was healthy: **430 Feature Pipeline
+runs, all green**, ~1m 20s each, no failed runs anywhere in the history.
+
+### 6.2 Root cause
+
+Expanding the `python -m feature_pipeline.pipeline` step of run **#430**
+(2026-08-26 09:29 UTC) gives the whole answer:
+
+```
+Uploading Dataframe: 100.00% |##########| Rows 1/1
+UserWarning: Materialization job is already running, aborting new execution.
+  Please wait for the current execution to finish before triggering a new one.
+  ...jobs/named/aqi_features_2_offline_fg_materialization
+Inserted feature row for *** at 2026-08-26 09:00:00+00:00 (AQI=148)
+```
+
+The hourly job is working perfectly. It fetches, computes the AQI, and the row
+**does** reach Hopsworks. What has stopped is the **offline feature-group
+materialisation job**: it is stuck in a running state, so every subsequent
+insert is buffered and never lands in the offline store. The offline store is
+what `serving/forecast.py` reads through Arrow Flight, so the dashboard, the API
+and the training pipeline have all been reading a table frozen at 2026-08-15
+while eleven days of rows accumulated behind a hung Spark job.
+
+The warning is emitted at **WARNING** level and the script then prints
+`Inserted feature row ... (AQI=148)` and exits 0. So the log's own last line
+contradicts the warning three lines above it, and the workflow goes green.
+
+### 6.3 Why this is the fifth instance of the same failure
+
+| # | Phase | Reported success while | 
+|---|---|---|
+| 1 | 2 | Materialisation lagged; reads returned stale rows |
+| 2 | 2 | Backfill "succeeded" with monthly chunks silently empty |
+| 3 | 4 | Registry write returned 500 but registration looked complete |
+| 4 | 5 | Dashboard served a stale model with its own copy of the feature logic |
+| 5 | **6** | **Hourly insert green for 11 days while the offline store was frozen** |
+
+The pattern is always the same shape: **a component reports on the operation it
+performed, not on the state it was supposed to produce.** The pipeline correctly
+reports "I inserted a row". Nobody was asking the only question that matters —
+*is the newest row in the offline store recent?*
+
+### 6.4 Fixes
+
+Three layers, because the diagnosis-only fix would let this recur silently.
+
+1. **Unblock it now** — stop the hung execution of
+   `aqi_features_2_offline_fg_materialization` in the Hopsworks Jobs UI and run
+   it again. The eleven days of buffered rows materialise on the next successful
+   pass.
+2. **Make the pipeline fail loudly** — after inserting, read the offline
+   maximum timestamp back and exit non-zero if it is older than a threshold.
+   Green CI has to mean *the offline store is current*, not *the HTTP call
+   returned 200*. This is the fourth time this project has needed the same
+   lesson written down, so this time it goes in the code.
+3. **Make it visible to a reader** — the dashboard shows the age of its data in
+   words, with a warning banner past ~2 hours. A caption that claims hourly
+   refresh must be falsifiable on the page itself. Had this existed, the bug
+   would have been caught on 2026-08-15 instead of on 2026-08-26 by a stranger's
+   reading of the page.
+
+The honesty problem is worth stating plainly: for eleven days the deployed app
+made a claim about itself ("refreshed hourly") that was false, and every
+automated check agreed with the claim rather than with reality.
+
+### 6.5 A note from reviewing the competition
+
+Three classmate dashboards were reviewed the same afternoon. Two of the three
+displayed a human-readable local timestamp prominently; one displayed both the
+current time and the data time, making any gap self-evident. None of the three
+showed a baseline, an R², or any statement of validation method — one published
+`Model RMSE ±6.32` at 24 hours, which for Lahore AQI would imply R² ≈ 0.996 and
+is far more likely to be a shuffled split than a good model.
+
+Both observations point the same way, and set the agenda for the final week:
+**this project's evaluation is its strongest asset and its least visible one.**
+The walk-forward numbers, the purged split, the persistence baseline and the
+blend weight all exist, are all honest, and all live in a PDF. They need to be
+on the page.
+
+---
+
 ## Open items
 
+- Unblock the hung offline materialisation job, then verify the offline maximum
+  timestamp is current (Phase 6.4 step 1)
+- Add the freshness assertion to the hourly pipeline (Phase 6.4 step 2)
+- Surface data age in the dashboard (Phase 6.4 step 3)
 - Re-run the training pipeline so the 72h model registers
 - Assemble and structure the final report from this log
 - Run the explainability workflow once to replace the committed Random Forest

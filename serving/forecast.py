@@ -8,7 +8,7 @@ import numpy as np
 
 from app.load_model import load_latest_model
 from feature_pipeline.aqi import aqi_category
-from feature_pipeline.hopsworks_store import read_features_df
+from feature_pipeline.hopsworks_store import read_features_df, read_recent_features_df
 from training_pipeline.data import FEATURE_COLUMNS, add_lag_features, add_time_features
 
 HORIZONS_HOURS = (24, 48, 72)
@@ -40,13 +40,42 @@ class ForecastUnavailable(RuntimeError):
     in the payload instead, so one absent model doesn't blank the dashboard."""
 
 
+# The longest rolling window is 72h and it is shifted by one, so 73 contiguous
+# hours are the minimum that can produce a complete row. Below this the bounded
+# read is not trusted and the full history is fetched instead.
+MIN_HISTORY_ROWS = 96
+
+
+def load_feature_history(city_name):
+    """Recent rows for this city, widening to the whole feature group if needed.
+
+    The bounded read is the fast path and covers every normal case. It comes back
+    short when the offline store has fallen behind its lookback window, which is
+    exactly when a stale forecast still beats no forecast -- the dashboard says how
+    old the reading is, so serving it is honest.
+    """
+    try:
+        recent = read_recent_features_df(city_name)
+    except Exception as error:
+        print(f"Bounded feature read failed ({type(error).__name__}); reading full history.")
+        return read_features_df()
+
+    if len(recent) >= MIN_HISTORY_ROWS:
+        return recent
+    print(
+        f"Bounded feature read returned {len(recent)} rows for {city_name!r}, "
+        f"fewer than {MIN_HISTORY_ROWS}; reading full history."
+    )
+    return read_features_df()
+
+
 def load_feature_row(city_name):
     """Newest feature row, built through the same transformations training uses.
 
     The lag and rolling features depend on preceding hours, so the live row
     cannot be assembled from a single feature-store record.
     """
-    df = read_features_df()
+    df = load_feature_history(city_name)
     city_rows = df[df["city_name"] == city_name]
     if city_rows.empty:
         raise ForecastUnavailable(f"No feature rows stored for city {city_name!r}")

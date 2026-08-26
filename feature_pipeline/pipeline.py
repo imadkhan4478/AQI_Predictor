@@ -10,11 +10,13 @@ from dotenv import load_dotenv
 
 from feature_pipeline.aqi import compute_aqi
 from feature_pipeline.fetch import get_pollution, get_pollution_at, get_weather
-from feature_pipeline.hopsworks_store import get_feature_group
+from feature_pipeline.hopsworks_store import get_feature_group, offline_max_timestamp
 
 load_dotenv()
 
 MAX_INSERT_ATTEMPTS = 3
+STALE_AFTER_HOURS = 6
+MATERIALIZATION_JOB = "aqi_features_2_offline_fg_materialization"
 
 
 def build_feature_row(city_name, weather, pollution, previous_aqi=None):
@@ -70,6 +72,44 @@ def get_previous_hour_aqi(lat, lon, api_key, observed_at):
     return aqi
 
 
+def verify_offline_freshness(city_name, observed_at):
+    """Raise if the offline store has not kept up with the inserts.
+
+    A clean return from `fg.insert` means the row was accepted, not that anything
+    can read it. Between 2026-08-15 and 2026-08-26 the materialisation job sat in
+    Initializing, 264 hourly runs each reported success, and the dashboard served
+    an 11-day-old reading throughout. Green has to mean the offline table is
+    current, so this runs after the insert and fails the job when it is not --
+    the row is already written either way.
+
+    A read that cannot complete is a warning, not a failure: Arrow Flight has its
+    own outages, and losing an hour of collection to a monitoring call would be a
+    worse trade than an unverified insert.
+    """
+    try:
+        newest = offline_max_timestamp(city_name)
+    except Exception as error:
+        print(
+            f"WARNING: offline freshness unverified ({type(error).__name__}: {error}). "
+            "Row inserted; offline table not checked.",
+            flush=True,
+        )
+        return None
+
+    lag_hours = None if newest is None else (observed_at - newest).total_seconds() / 3600
+    if newest is not None and lag_hours <= STALE_AFTER_HOURS:
+        print(f"Offline store current: newest row {newest} ({lag_hours:.1f}h behind)")
+        return newest
+
+    behind = "has no rows in the lookback window" if newest is None else f"is {lag_hours:.1f}h behind"
+    raise RuntimeError(
+        f"Offline store {behind} while inserts are succeeding. The materialisation "
+        f"job {MATERIALIZATION_JOB} has almost certainly stalled -- stop its current "
+        "execution in the Hopsworks Jobs UI and run it again. The row for "
+        f"{observed_at} was inserted and is not lost."
+    )
+
+
 def run():
     api_key = os.environ["OPENWEATHER_API_KEY"]
     lat = os.environ["CITY_LAT"]
@@ -107,6 +147,7 @@ def run():
             )
             time.sleep(wait_seconds)
     print(f"Inserted feature row for {city_name} at {row['timestamp']} (AQI={row['aqi']})")
+    verify_offline_freshness(city_name, row["timestamp"])
 
 
 if __name__ == "__main__":

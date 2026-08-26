@@ -6,7 +6,9 @@ in-process or over HTTP from the FastAPI service when AQI_API_URL is set.
 
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 # `streamlit run app/app.py` puts this file's folder on sys.path, not the repo
 # root, so sibling packages would not otherwise resolve.
@@ -47,20 +49,29 @@ API_TIMEOUT_SECONDS = 30
 
 SHAP_PLOT_PATH = "reports/shap_feature_importance.png"
 
+# The page is read by people in the city it forecasts, so timestamps are shown in
+# local time. UTC stays the storage and API format.
+DISPLAY_TIMEZONE = os.environ.get("CITY_TZ", "Asia/Karachi")
+
+# An hourly pipeline that is two hours behind is late; a day behind is broken.
+# Stated on the page because the claim "refreshed hourly" was false for eleven
+# days and nothing on the page contradicted it.
+STALE_AFTER_HOURS = 2
+BROKEN_AFTER_HOURS = 24
+
 CARD_CSS = """
 <style>
+/* Text colour is set per card from the background's luminance, not here. */
 .aqi-hero {
     border-radius: 12px;
     padding: 1.5rem 1.75rem;
-    color: white;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
 .aqi-hero .value { font-size: 3.2rem; font-weight: 700; line-height: 1; }
 .aqi-hero .category { font-size: 1.2rem; font-weight: 600; margin-top: 0.25rem; }
 .legend-chip {
     display: inline-flex; align-items: center; gap: 0.4rem;
     padding: 0.15rem 0.6rem; border-radius: 999px;
-    font-size: 0.78rem; color: white; margin: 0.15rem;
+    font-size: 0.78rem; margin: 0.15rem;
 }
 </style>
 """
@@ -93,9 +104,62 @@ def fetch_model_details():
     return model_details(cached_models())
 
 
+def readable_text_color(background_hex):
+    """Black or white against this background, whichever has more contrast.
+
+    Every category card used to carry white text, which fails WCAG on the yellow
+    and orange bands -- the two most common readings in Lahore outside winter.
+    Crossover is at relative luminance 0.179, where the ratio against black and
+    against white are equal.
+    """
+    channels = [int(background_hex.lstrip("#")[i : i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+    luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+    return "#111111" if luminance > 0.179 else "#ffffff"
+
+
+def observation_age(payload):
+    """(hours since the observation, local-time string, timezone abbreviation)."""
+    observed = datetime.fromisoformat(payload["observed_at"])
+    age_hours = (datetime.now(timezone.utc) - observed).total_seconds() / 3600
+    local = observed.astimezone(ZoneInfo(DISPLAY_TIMEZONE))
+    return age_hours, local.strftime("%d %B %Y, %H:%M"), local.tzname()
+
+
+def relative_age(age_hours):
+    if age_hours < 1.5:
+        return "less than an hour ago"
+    if age_hours < 48:
+        return f"{round(age_hours)} hours ago"
+    return f"{round(age_hours / 24)} days ago"
+
+
+def render_freshness(payload):
+    """State how old the reading is, and say so loudly when it is too old.
+
+    The dashboard once served an eleven-day-old reading under a caption promising
+    hourly refresh. A claim a page makes about itself has to be falsifiable on
+    that page.
+    """
+    age_hours, local_text, tz_label = observation_age(payload)
+    line = f"Latest observation **{local_text} {tz_label}** — {relative_age(age_hours)}"
+
+    if age_hours >= BROKEN_AFTER_HOURS:
+        st.error(
+            f"{line}. The hourly pipeline is not reaching the offline store, so every "
+            "number below describes that observation rather than now."
+        )
+    elif age_hours >= STALE_AFTER_HOURS:
+        st.warning(f"{line}. Later than an hourly pipeline should be.")
+    else:
+        st.success(line)
+    return age_hours
+
+
 def render_hero(reading):
     st.markdown(
-        f"""<div class="aqi-hero" style="background:{reading['color']};">
+        f"""<div class="aqi-hero" style="background:{reading['color']};
+                    color:{readable_text_color(reading['color'])};">
                 <div class="value">{reading['aqi']}</div>
                 <div class="category">{reading['category']}</div>
             </div>""",
@@ -105,7 +169,8 @@ def render_hero(reading):
 
 def render_legend():
     chips = "".join(
-        f'<span class="legend-chip" style="background:{color};">{name}</span>'
+        f'<span class="legend-chip" style="background:{color};'
+        f'color:{readable_text_color(color)};">{name}</span>'
         for _, _, name, _, color in _CATEGORIES
     )
     st.markdown(chips, unsafe_allow_html=True)
@@ -144,7 +209,7 @@ def main():
     st.title(f"🌫️ AQI Predictor — {city_name}")
     st.caption(
         "3-day Air Quality Index forecast · gradient boosting blended with a persistence "
-        "baseline, retrained daily · data refreshed hourly"
+        "baseline, retrained daily · feature pipeline runs hourly"
         + (f" · served by the API at {API_URL}" if API_URL else "")
     )
 
@@ -161,6 +226,8 @@ def main():
         st.error(f"Could not reach the model registry: {error}")
         return
 
+    render_freshness(payload)
+
     if payload["unavailable_horizons"]:
         # A visibly missing horizon beats a plausible number from a guessed weight.
         st.error(
@@ -174,7 +241,8 @@ def main():
         render_hero(payload["current"])
     with col2:
         st.write("")
-        st.caption(f"As of **{payload['observed_at']}**")
+        _, local_text, tz_label = observation_age(payload)
+        st.caption(f"Observed **{local_text} {tz_label}** · stored as {payload['observed_at']}")
         if payload["current"]["dominant_pollutant"]:
             st.write(f"Dominant pollutant: **{payload['current']['dominant_pollutant']}**")
         render_legend()

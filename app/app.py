@@ -29,6 +29,16 @@ from serving.forecast import (
 
 load_dotenv()
 
+# Streamlit Community Cloud has no .env -- it supplies configuration through
+# st.secrets. Copy those into the environment so the serving core, which is not
+# Streamlit-aware, reads configuration the same way in both places.
+try:
+    for _key, _value in st.secrets.items():
+        if isinstance(_value, str):
+            os.environ.setdefault(_key, _value)
+except Exception:  # no secrets configured -- normal when running locally from .env
+    pass
+
 # Set AQI_API_URL to read from the FastAPI service instead of loading models into
 # the Streamlit process. Both paths return the same payload, so this is a
 # deployment choice rather than a behavioural one.

@@ -59,7 +59,7 @@ def test_unreadable_offline_store_warns_rather_than_failing(monkeypatch, capsys)
     """An Arrow Flight outage must not cost an hour of collection."""
     patch_offline(monkeypatch, ConnectionError("Flight unavailable"))
     assert pl.verify_offline_freshness("Lahore", OBSERVED_AT) is None
-    assert "unverified" in capsys.readouterr().out
+    assert "UNVERIFIED" in capsys.readouterr().out
 
 
 def test_failure_names_the_row_as_kept(monkeypatch):
@@ -67,3 +67,23 @@ def test_failure_names_the_row_as_kept(monkeypatch):
     patch_offline(monkeypatch, pd.Timestamp("2026-08-15 02:00:00+00:00"))
     with pytest.raises(RuntimeError, match="not lost"):
         pl.verify_offline_freshness("Lahore", OBSERVED_AT)
+
+
+def test_annotation_is_emitted_only_inside_actions(monkeypatch, capsys):
+    """The freshness verdict has to be readable from the run summary, not only
+    from a collapsed log step."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    pl.announce("CURRENT: all good")
+    assert "::notice title=Offline freshness::CURRENT: all good" in capsys.readouterr().out
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    pl.announce("CURRENT: all good")
+    assert "::notice" not in capsys.readouterr().out
+
+
+def test_stale_store_is_annotated_as_an_error(monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    patch_offline(monkeypatch, pd.Timestamp("2026-08-15 02:00:00+00:00"))
+    with pytest.raises(RuntimeError):
+        pl.verify_offline_freshness("Lahore", OBSERVED_AT)
+    assert "::error title=Offline freshness::STALE" in capsys.readouterr().out

@@ -72,6 +72,18 @@ def get_previous_hour_aqi(lat, lon, api_key, observed_at):
     return aqi
 
 
+def announce(message, level="notice"):
+    """Report to the log, and to the run summary when running in Actions.
+
+    A number buried in a collapsed log step is not monitoring. As an annotation it
+    appears on the run page and in the checks API, so freshness can be read without
+    opening anything.
+    """
+    print(message, flush=True)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::{level} title=Offline freshness::{message}", flush=True)
+
+
 def verify_offline_freshness(city_name, observed_at):
     """Raise if the offline store has not kept up with the inserts.
 
@@ -89,19 +101,20 @@ def verify_offline_freshness(city_name, observed_at):
     try:
         newest = offline_max_timestamp(city_name)
     except Exception as error:
-        print(
-            f"WARNING: offline freshness unverified ({type(error).__name__}: {error}). "
-            "Row inserted; offline table not checked.",
-            flush=True,
+        announce(
+            f"UNVERIFIED: could not read the offline store ({type(error).__name__}: {error}). "
+            "Row inserted; freshness not checked.",
+            level="warning",
         )
         return None
 
     lag_hours = None if newest is None else (observed_at - newest).total_seconds() / 3600
     if newest is not None and lag_hours <= STALE_AFTER_HOURS:
-        print(f"Offline store current: newest row {newest} ({lag_hours:.1f}h behind)")
+        announce(f"CURRENT: newest offline row {newest}, {lag_hours:.1f}h behind the insert")
         return newest
 
     behind = "has no rows in the lookback window" if newest is None else f"is {lag_hours:.1f}h behind"
+    announce(f"STALE: offline store {behind}; newest row {newest}", level="error")
     raise RuntimeError(
         f"Offline store {behind} while inserts are succeeding. The materialisation "
         f"job {MATERIALIZATION_JOB} has almost certainly stalled -- stop its current "

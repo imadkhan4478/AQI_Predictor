@@ -6,6 +6,7 @@ in-process or over HTTP from the FastAPI service when AQI_API_URL is set.
 
 import os
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -93,6 +94,37 @@ def fetch_payload(city_name):
         response.raise_for_status()
         return response.json()
     return build_forecast(city_name, cached_models(), load_feature_row(city_name))
+
+
+@st.cache_resource
+def last_good_payload():
+    """Holder for the most recent payload that loaded, shared across sessions.
+
+    Hopsworks' Query Service is the single point of failure on the read path and
+    it goes down for stretches. A reader is better served by the last reading with
+    its age stated plainly than by an error, so long as the age is impossible to
+    miss -- which is what render_freshness guarantees.
+    """
+    return {}
+
+
+def fetch_payload_or_last_good(city_name):
+    """(payload, live) -- `live` is False when serving a retained payload.
+
+    The broad except is deliberate: the failure modes here are a remote service's,
+    not this code's, and no exception from them should reach the page as a
+    traceback. The detail goes to the log instead.
+    """
+    try:
+        payload = fetch_payload(city_name)
+    except Exception:
+        retained = last_good_payload().get("payload")
+        traceback.print_exc()
+        if retained is None:
+            raise
+        return retained, False
+    last_good_payload()["payload"] = payload
+    return payload, True
 
 
 @st.cache_data(ttl=600)
@@ -215,16 +247,32 @@ def main():
 
     try:
         with st.spinner("Loading latest data and models..."):
-            payload = fetch_payload(city_name)
+            payload, live = fetch_payload_or_last_good(city_name)
     except ForecastUnavailable as error:
         st.warning(f"No forecast available yet: {error}")
         return
-    except requests.RequestException as error:
-        st.error(f"Could not reach the forecast API at {API_URL}: {error}")
+    except requests.RequestException:
+        st.error(
+            f"The forecast API at {API_URL} is not responding. Nothing is cached yet, "
+            "so there is nothing to show. Try again shortly."
+        )
         return
-    except ConnectionError as error:
-        st.error(f"Could not reach the model registry: {error}")
+    except Exception:
+        # Whatever broke is on the far side of a network call. A traceback on the
+        # page tells a reader nothing and looks like a broken project.
+        traceback.print_exc()
+        st.error(
+            "The feature store is not answering reads right now, and no earlier "
+            "reading is cached in this process. Details are in the app log. "
+            "This clears on its own -- the hourly pipeline keeps collecting either way."
+        )
         return
+
+    if not live:
+        st.info(
+            "Live read failed, so this is the last reading that loaded successfully. "
+            "Its age is stated below."
+        )
 
     render_freshness(payload)
 

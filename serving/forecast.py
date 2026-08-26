@@ -49,22 +49,26 @@ MIN_HISTORY_ROWS = 96
 def load_feature_history(city_name):
     """Recent rows for this city, widening to the whole feature group if needed.
 
-    The bounded read is the fast path and covers every normal case. It comes back
-    short when the offline store has fallen behind its lookback window, which is
-    exactly when a stale forecast still beats no forecast -- the dashboard says how
-    old the reading is, so serving it is honest.
+    The two failure modes are handled differently on purpose. A bounded read that
+    *succeeds but returns too little* means the offline store has fallen behind its
+    lookback window, and the full history is worth fetching. A bounded read that
+    *fails* means the Query Service is refusing reads, and retrying the same
+    service with a 200x larger request only fails again, slower -- so it is raised
+    for the caller to degrade on.
     """
     try:
         recent = read_recent_features_df(city_name)
     except Exception as error:
-        print(f"Bounded feature read failed ({type(error).__name__}); reading full history.")
-        return read_features_df()
+        raise ForecastUnavailable(
+            f"Feature store read failed ({type(error).__name__}: {error})"
+        ) from error
 
     if len(recent) >= MIN_HISTORY_ROWS:
         return recent
     print(
         f"Bounded feature read returned {len(recent)} rows for {city_name!r}, "
-        f"fewer than {MIN_HISTORY_ROWS}; reading full history."
+        f"fewer than {MIN_HISTORY_ROWS}; reading full history.",
+        flush=True,
     )
     return read_features_df()
 

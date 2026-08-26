@@ -72,3 +72,37 @@ class TestObservationAge:
         """2026-08-15 02:00 UTC served on 2026-08-26 -- the reading that went
         unnoticed because the page printed a raw ISO timestamp."""
         assert dash.relative_age(265.0) == "11 days ago"
+
+
+class TestDegradation:
+    """The page must never answer a remote failure with a traceback."""
+
+    def test_successful_payload_is_retained(self, monkeypatch):
+        dash.last_good_payload().clear()
+        monkeypatch.setattr(dash, "fetch_payload", lambda city: {"observed_at": "x"})
+        payload, live = dash.fetch_payload_or_last_good("Lahore")
+        assert live is True
+        assert dash.last_good_payload()["payload"] == payload
+
+    def test_retained_payload_is_served_when_the_read_fails(self, monkeypatch):
+        dash.last_good_payload().clear()
+        monkeypatch.setattr(dash, "fetch_payload", lambda city: {"observed_at": "good"})
+        dash.fetch_payload_or_last_good("Lahore")
+
+        def boom(city):
+            raise RuntimeError("Query Service refused the read")
+
+        monkeypatch.setattr(dash, "fetch_payload", boom)
+        payload, live = dash.fetch_payload_or_last_good("Lahore")
+        assert live is False
+        assert payload["observed_at"] == "good"
+
+    def test_failure_with_nothing_retained_propagates(self, monkeypatch):
+        dash.last_good_payload().clear()
+
+        def boom(city):
+            raise RuntimeError("Query Service refused the read")
+
+        monkeypatch.setattr(dash, "fetch_payload", boom)
+        with pytest.raises(RuntimeError):
+            dash.fetch_payload_or_last_good("Lahore")

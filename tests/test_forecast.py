@@ -144,7 +144,8 @@ def test_alert_thresholds_come_from_the_aqi_table():
 
 def test_load_feature_row_raises_when_the_city_is_absent(monkeypatch):
     monkeypatch.setattr(
-        fc, "read_features_df", lambda: pd.DataFrame({"city_name": ["Karachi"], "aqi": [100]})
+        fc, "read_recent_features_df",
+        lambda city: pd.DataFrame({"city_name": ["Karachi"] * 96, "aqi": [100] * 96}),
     )
     with pytest.raises(fc.ForecastUnavailable, match="No feature rows"):
         fc.load_feature_row("Lahore")
@@ -173,13 +174,14 @@ def _store_frame(hours):
 
 def test_load_feature_row_raises_when_lags_are_incomplete(monkeypatch):
     """Under 72 contiguous hours, no row has complete rolling features."""
+    monkeypatch.setattr(fc, "read_recent_features_df", lambda city: _store_frame(10))
     monkeypatch.setattr(fc, "read_features_df", lambda: _store_frame(10))
     with pytest.raises(fc.ForecastUnavailable, match="complete set of lag features"):
         fc.load_feature_row("Lahore")
 
 
 def test_load_feature_row_returns_the_newest_complete_row(monkeypatch):
-    monkeypatch.setattr(fc, "read_features_df", lambda: _store_frame(200))
+    monkeypatch.setattr(fc, "read_recent_features_df", lambda city: _store_frame(200))
     row = fc.load_feature_row("Lahore")
 
     assert not row[fc.FEATURE_COLUMNS].isna().any()
@@ -189,7 +191,7 @@ def test_load_feature_row_returns_the_newest_complete_row(monkeypatch):
 def test_schema_drift_names_the_missing_columns(monkeypatch):
     """If training and serving disagree on the feature set, say which columns."""
     frame = _store_frame(200).drop(columns=["pm10", "humidity"])
-    monkeypatch.setattr(fc, "read_features_df", lambda: frame)
+    monkeypatch.setattr(fc, "read_recent_features_df", lambda city: frame)
 
     with pytest.raises(fc.ForecastUnavailable, match="missing columns"):
         fc.load_feature_row("Lahore")
@@ -225,14 +227,18 @@ class TestFeatureHistory:
         monkeypatch.setattr(fc, "read_features_df", lambda: pd.DataFrame({"city_name": ["full"]}))
         assert fc.load_feature_history("Lahore")["city_name"].tolist() == ["full"]
 
-    def test_failed_bounded_read_falls_back_to_full_history(self, monkeypatch):
-        def boom(city):
-            raise ConnectionError("Flight unavailable")
-
-        monkeypatch.setattr(fc, "read_recent_features_df", boom)
-        monkeypatch.setattr(fc, "read_features_df", lambda: pd.DataFrame({"city_name": ["full"]}))
-        assert fc.load_feature_history("Lahore")["city_name"].tolist() == ["full"]
-
-
 def _must_not_be_called():
     raise AssertionError("full feature-group read should not happen on the fast path")
+
+
+def test_failed_bounded_read_is_not_escalated_to_a_full_read(monkeypatch):
+    """Retrying a refusing Query Service with a 200x larger request only fails
+    again, slower. The caller degrades instead."""
+
+    def boom(city):
+        raise ConnectionError("Flight unavailable")
+
+    monkeypatch.setattr(fc, "read_recent_features_df", boom)
+    monkeypatch.setattr(fc, "read_features_df", _must_not_be_called)
+    with pytest.raises(fc.ForecastUnavailable, match="ConnectionError"):
+        fc.load_feature_history("Lahore")

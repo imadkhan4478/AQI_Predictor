@@ -10,12 +10,21 @@ from dotenv import load_dotenv
 
 from feature_pipeline.aqi import compute_aqi
 from feature_pipeline.fetch import get_pollution, get_pollution_at, get_weather
-from feature_pipeline.hopsworks_store import get_feature_group, offline_max_timestamp
+from feature_pipeline.hopsworks_store import (
+    OFFLINE_LOOKBACK_HOURS,
+    get_feature_group,
+    offline_timestamps,
+)
 
 load_dotenv()
 
 MAX_INSERT_ATTEMPTS = 3
 STALE_AFTER_HOURS = 6
+
+# An hourly pipeline should leave roughly one row per hour in the window. Well
+# under that means a gap, which the newest timestamp alone cannot reveal.
+MIN_WINDOW_COVERAGE = 0.8
+
 MATERIALIZATION_JOB = "aqi_features_2_offline_fg_materialization"
 
 
@@ -85,21 +94,23 @@ def announce(message, level="notice"):
 
 
 def verify_offline_freshness(city_name, observed_at):
-    """Raise if the offline store has not kept up with the inserts.
+    """Raise unless the offline store both reaches `observed_at` and covers the
+    hours before it.
 
-    A clean return from `fg.insert` means the row was accepted, not that anything
-    can read it. Between 2026-08-15 and 2026-08-26 the materialisation job sat in
-    Initializing, 264 hourly runs each reported success, and the dashboard served
-    an 11-day-old reading throughout. Green has to mean the offline table is
-    current, so this runs after the insert and fails the job when it is not --
-    the row is already written either way.
+    Checking only the newest timestamp is not enough, and this is the second
+    version of this function for exactly that reason. After the materialisation
+    stall of 2026-08-15 was cleared, the newest offline row was an hour old and
+    this check passed -- while eleven days were missing behind it. Serving needs
+    72 contiguous hours to compute its rolling features, so it silently fell back
+    to the last complete row, from before the gap, and the dashboard went on
+    showing an eleven-day-old reading through a green pipeline.
 
     A read that cannot complete is a warning, not a failure: Arrow Flight has its
     own outages, and losing an hour of collection to a monitoring call would be a
     worse trade than an unverified insert.
     """
     try:
-        newest = offline_max_timestamp(city_name)
+        stamps = offline_timestamps(city_name)
     except Exception as error:
         announce(
             f"UNVERIFIED: could not read the offline store ({type(error).__name__}: {error}). "
@@ -108,15 +119,45 @@ def verify_offline_freshness(city_name, observed_at):
         )
         return None
 
-    lag_hours = None if newest is None else (observed_at - newest).total_seconds() / 3600
-    if newest is not None and lag_hours <= STALE_AFTER_HOURS:
-        announce(f"CURRENT: newest offline row {newest}, {lag_hours:.1f}h behind the insert")
-        return newest
+    if stamps.empty:
+        announce(
+            f"STALE: offline store has no rows in the last {OFFLINE_LOOKBACK_HOURS}h",
+            level="error",
+        )
+        raise RuntimeError(_remedy(f"has no rows in the last {OFFLINE_LOOKBACK_HOURS}h", observed_at))
 
-    behind = "has no rows in the lookback window" if newest is None else f"is {lag_hours:.1f}h behind"
-    announce(f"STALE: offline store {behind}; newest row {newest}", level="error")
-    raise RuntimeError(
-        f"Offline store {behind} while inserts are succeeding. The materialisation "
+    newest = stamps.max()
+    lag_hours = (observed_at - newest).total_seconds() / 3600
+    coverage = len(stamps) / OFFLINE_LOOKBACK_HOURS
+
+    if lag_hours > STALE_AFTER_HOURS:
+        announce(f"STALE: newest offline row {newest} is {lag_hours:.1f}h behind", level="error")
+        raise RuntimeError(_remedy(f"is {lag_hours:.1f}h behind", observed_at))
+
+    if coverage < MIN_WINDOW_COVERAGE:
+        announce(
+            f"GAP: newest offline row {newest} is current, but only {len(stamps)} of the "
+            f"last {OFFLINE_LOOKBACK_HOURS} hours are present ({coverage:.0%})",
+            level="error",
+        )
+        raise RuntimeError(
+            f"The offline store holds only {len(stamps)} of the last "
+            f"{OFFLINE_LOOKBACK_HOURS} hours. Recent rows exist but the history "
+            "behind them does not, so serving cannot compute its 72h rolling "
+            "features and will fall back to the newest complete row -- which is on "
+            "the far side of the gap. Backfill the missing range."
+        )
+
+    announce(
+        f"CURRENT: newest offline row {newest}, {lag_hours:.1f}h behind the insert, "
+        f"{len(stamps)}/{OFFLINE_LOOKBACK_HOURS} hours present"
+    )
+    return newest
+
+
+def _remedy(problem, observed_at):
+    return (
+        f"Offline store {problem} while inserts are succeeding. The materialisation "
         f"job {MATERIALIZATION_JOB} has almost certainly stalled -- stop its current "
         "execution in the Hopsworks Jobs UI and run it again. The row for "
         f"{observed_at} was inserted and is not lost."

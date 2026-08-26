@@ -1065,7 +1065,48 @@ The honesty problem is worth stating plainly: for eleven days the deployed app
 made a claim about itself ("refreshed hourly") that was false, and every
 automated check agreed with the claim rather than with reality.
 
-### 6.5 A note from reviewing the competition
+### 6.5 The fix was incomplete, and the new check could not see it
+
+Clearing the stall did not restore the dashboard. Two readings disagreed:
+
+| Reading | Result |
+|---|---|
+| Pipeline's `MAX(timestamp)` over the offline store | `2026-08-26 10:00 UTC` — one hour old |
+| Dashboard's displayed observation | `2026-08-15 08:00 UTC` — eleven days old |
+
+Both were correct. The offline store holds continuous history to **15 Aug 08:00**,
+then **nothing for eleven days**, then the three rows inserted after the job was
+unblocked. The buffered rows did not survive the stall; only new inserts flow.
+
+Serving needs 72 contiguous hours to compute its rolling features, so
+`dropna(subset=FEATURE_COLUMNS)` discards the three fresh rows and
+`.iloc[-1]` returns the newest *complete* row — the last one before the gap. The
+dashboard was not stale by accident; it was correctly reporting the newest row it
+could actually use. The same gap explains the slow load: the 240h bounded read
+returned 3 rows, fell below the 96-row floor, and escalated to the full 49k read.
+
+**The check written in 6.4 to catch this class of failure passed anyway.** It
+asked for the newest timestamp, and the newest timestamp was one hour old. It
+never asked whether the hours *behind* it existed. That is the identical mistake
+this phase is about — reporting on an operation rather than on a state — repeated
+inside the fix for it, the same day, by the person who had just written it down.
+
+Rewritten to read every timestamp in the window and require 80% coverage, which
+separates three conditions that have three different remedies:
+
+| Verdict | Meaning | Remedy |
+|---|---|---|
+| `CURRENT` | newest row recent, window covered | none |
+| `STALE` | newest row far behind | restart the materialisation job |
+| `GAP` | newest row recent, window sparse | backfill the missing range |
+
+The `GAP` message deliberately does not mention the materialisation job: pointing
+at the Jobs UI for a problem the Jobs UI cannot fix cost an hour today.
+
+Remedy applied: backfill from 2026-08-14, overlapping the intact data by a day so
+the upsert leaves no one-hour seam at the join.
+
+### 6.6 A note from reviewing the competition
 
 Three classmate dashboards were reviewed the same afternoon. Two of the three
 displayed a human-readable local timestamp prominently; one displayed both the

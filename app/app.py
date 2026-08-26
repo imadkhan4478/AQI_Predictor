@@ -174,12 +174,15 @@ def render_freshness(payload):
     that page.
     """
     age_hours, local_text, tz_label = observation_age(payload)
-    line = f"Latest observation **{local_text} {tz_label}** — {relative_age(age_hours)}"
+    # "complete", not "latest": serving uses the newest row that has a full set of
+    # lag features, which is not the newest row when there is a gap behind it.
+    line = f"Latest complete observation **{local_text} {tz_label}** — {relative_age(age_hours)}"
 
     if age_hours >= BROKEN_AFTER_HOURS:
         st.error(
-            f"{line}. The hourly pipeline is not reaching the offline store, so every "
-            "number below describes that observation rather than now."
+            f"{line}. Either the hourly pipeline is not reaching the offline store or "
+            "there is a gap in the recent history, so every number below describes that "
+            "observation rather than now."
         )
     elif age_hours >= STALE_AFTER_HOURS:
         st.warning(f"{line}. Later than an hourly pipeline should be.")

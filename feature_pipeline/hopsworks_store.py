@@ -87,8 +87,9 @@ def read_recent_features_df(city_name, hours=SERVING_LOOKBACK_HOURS):
 OFFLINE_LOOKBACK_HOURS = 48
 
 
-def offline_max_timestamp(city_name):
-    """Newest timestamp readable in the *offline* store for this city, or None.
+def offline_timestamps(city_name):
+    """Every timestamp readable in the *offline* store for this city over the
+    lookback window, as a Series. Empty if none.
 
     `fg.insert` writes through the online path and hands the offline table to a
     materialisation job. When that job stalls the insert still succeeds, while the
@@ -106,12 +107,12 @@ def offline_max_timestamp(city_name):
         df = _read_with_retry(query.read, "Offline freshness check")
     except RestAPIError as error:
         if _is_empty_feature_group(error):
-            return None
+            return pd.Series([], dtype="datetime64[ns, UTC]")
         raise
 
     if df.empty:
-        return None
-    return pd.to_datetime(df["timestamp"]).max()
+        return pd.Series([], dtype="datetime64[ns, UTC]")
+    return pd.to_datetime(df["timestamp"]).sort_values()
 
 
 def get_aqi_at(city_name, timestamp):

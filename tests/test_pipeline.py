@@ -121,3 +121,28 @@ def test_annotation_is_emitted_only_inside_actions(monkeypatch, capsys):
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     pl.announce("CURRENT: all good")
     assert "::notice" not in capsys.readouterr().out
+
+
+class TestFutureRows:
+    """The backfill of 2026-08-26 wrote 11 hours that had not happened yet, and the
+    coverage check reported 59/48 with a negative lag rather than failing."""
+
+    def test_rows_dated_after_the_insert_fail(self, monkeypatch):
+        stamps = hourly_series(48, end=OBSERVED_AT + pd.Timedelta(hours=11))
+        patch_offline(monkeypatch, stamps)
+        with pytest.raises(RuntimeError, match="in the future"):
+            pl.verify_offline_freshness("Lahore", OBSERVED_AT)
+
+    def test_future_rows_are_annotated_as_future(self, monkeypatch, capsys):
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        patch_offline(monkeypatch, hourly_series(48, end=OBSERVED_AT + pd.Timedelta(hours=11)))
+        with pytest.raises(RuntimeError):
+            pl.verify_offline_freshness("Lahore", OBSERVED_AT)
+        assert "::error title=Offline freshness::FUTURE" in capsys.readouterr().out
+
+    def test_more_rows_than_hours_fails(self, monkeypatch):
+        """Duplicate primary keys, with no future dates to explain them."""
+        stamps = pd.concat([hourly_series(48), hourly_series(10)], ignore_index=True)
+        patch_offline(monkeypatch, stamps.sort_values().reset_index(drop=True))
+        with pytest.raises(RuntimeError, match="More rows than hours"):
+            pl.verify_offline_freshness("Lahore", OBSERVED_AT)

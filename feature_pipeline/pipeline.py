@@ -25,6 +25,10 @@ STALE_AFTER_HOURS = 6
 # under that means a gap, which the newest timestamp alone cannot reveal.
 MIN_WINDOW_COVERAGE = 0.8
 
+# More rows than hours means duplicate keys or, as on 2026-08-26, rows dated in
+# the future. Either way the window is not what it claims to be.
+MAX_WINDOW_COVERAGE = 1.1
+
 MATERIALIZATION_JOB = "aqi_features_2_offline_fg_materialization"
 
 
@@ -129,6 +133,31 @@ def verify_offline_freshness(city_name, observed_at):
     newest = stamps.max()
     lag_hours = (observed_at - newest).total_seconds() / 3600
     coverage = len(stamps) / OFFLINE_LOOKBACK_HOURS
+
+    if lag_hours < 0:
+        announce(
+            f"FUTURE: offline store holds rows up to {newest}, "
+            f"{abs(lag_hours):.1f}h ahead of the observation just inserted",
+            level="error",
+        )
+        raise RuntimeError(
+            f"The offline store contains rows dated {abs(lag_hours):.1f}h in the future "
+            f"(newest {newest}). Both source APIs return the rest of the calendar day as "
+            "forecast when a range ends today, so a backfill can write hours that have "
+            "not happened. Those rows are not observations and must not reach training."
+        )
+
+    if coverage > MAX_WINDOW_COVERAGE:
+        announce(
+            f"DUPLICATED: {len(stamps)} rows in the last {OFFLINE_LOOKBACK_HOURS} hours "
+            f"({coverage:.0%} of one row per hour)",
+            level="error",
+        )
+        raise RuntimeError(
+            f"The offline store holds {len(stamps)} rows for the last "
+            f"{OFFLINE_LOOKBACK_HOURS} hours. More rows than hours means duplicate "
+            "primary keys or future-dated rows."
+        )
 
     if lag_hours > STALE_AFTER_HOURS:
         announce(f"STALE: newest offline row {newest} is {lag_hours:.1f}h behind", level="error")

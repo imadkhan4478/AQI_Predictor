@@ -105,6 +105,27 @@ def time_based_split(X, y, timestamps, horizon_hours=FORECAST_HORIZON_HOURS, tes
     return X.loc[purged_idx], X.loc[test_idx], y.loc[purged_idx], y.loc[test_idx]
 
 
+def drop_future_rows(df, now=None):
+    """Remove rows timestamped after the current hour.
+
+    Both source APIs return the remaining hours of the current day when the
+    requested range ends today -- forecast values, not observations. The backfill
+    of 2026-08-26 wrote eleven such rows, up to 23:00 UTC. They are not
+    measurements: as features they are fabricated inputs, and as labels they teach
+    the model to reproduce somebody else's forecast.
+    """
+    if now is None:
+        now = pd.Timestamp.now(tz="UTC").floor("h")
+    future = df["timestamp"] > now
+    if future.any():
+        print(
+            f"Dropped {int(future.sum())} rows timestamped after {now}; "
+            "forecast hours are not observations",
+            flush=True,
+        )
+    return df.loc[~future].reset_index(drop=True)
+
+
 def load_training_data(horizon_hours=FORECAST_HORIZON_HOURS, target=TARGET_COLUMN):
     """Returns (X, y, timestamps, current_aqi).
 
@@ -114,7 +135,7 @@ def load_training_data(horizon_hours=FORECAST_HORIZON_HOURS, target=TARGET_COLUM
     over the test window, and tree models cannot extrapolate below what they trained
     on.
     """
-    df = read_features_df()
+    df = drop_future_rows(read_features_df())
     df = add_time_features(df)
     df = add_lag_features(df)
     df = add_target(df, horizon_hours)

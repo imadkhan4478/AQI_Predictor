@@ -9,7 +9,12 @@ import numpy as np
 from app.load_model import load_latest_model
 from feature_pipeline.aqi import aqi_category
 from feature_pipeline.hopsworks_store import read_features_df, read_recent_features_df
-from training_pipeline.data import FEATURE_COLUMNS, add_lag_features, add_time_features
+from training_pipeline.data import (
+    FEATURE_COLUMNS,
+    add_lag_features,
+    add_time_features,
+    drop_future_rows,
+)
 
 HORIZONS_HOURS = (24, 48, 72)
 MODEL_NAME_TEMPLATE = "aqi_forecast_{}h"
@@ -63,6 +68,7 @@ def load_feature_history(city_name):
             f"Feature store read failed ({type(error).__name__}: {error})"
         ) from error
 
+    recent = drop_future_rows(recent)
     if len(recent) >= MIN_HISTORY_ROWS:
         return recent
     print(
@@ -70,7 +76,7 @@ def load_feature_history(city_name):
         f"fewer than {MIN_HISTORY_ROWS}; reading full history.",
         flush=True,
     )
-    return read_features_df()
+    return drop_future_rows(read_features_df())
 
 
 def load_feature_row(city_name):

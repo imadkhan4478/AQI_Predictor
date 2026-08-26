@@ -145,7 +145,13 @@ def test_alert_thresholds_come_from_the_aqi_table():
 def test_load_feature_row_raises_when_the_city_is_absent(monkeypatch):
     monkeypatch.setattr(
         fc, "read_recent_features_df",
-        lambda city: pd.DataFrame({"city_name": ["Karachi"] * 96, "aqi": [100] * 96}),
+        lambda city: pd.DataFrame(
+            {
+                "city_name": ["Karachi"] * 96,
+                "aqi": [100] * 96,
+                "timestamp": pd.date_range("2026-08-01", periods=96, freq="h", tz="UTC"),
+            }
+        ),
     )
     with pytest.raises(fc.ForecastUnavailable, match="No feature rows"):
         fc.load_feature_row("Lahore")
@@ -214,7 +220,14 @@ class TestFeatureHistory:
     """The bounded read is the fast path; the full read is the safety net."""
 
     def test_bounded_read_is_used_when_it_returns_enough_rows(self, monkeypatch):
-        recent = pd.DataFrame({"city_name": ["Lahore"] * fc.MIN_HISTORY_ROWS})
+        recent = pd.DataFrame(
+            {
+                "city_name": ["Lahore"] * fc.MIN_HISTORY_ROWS,
+                "timestamp": pd.date_range(
+                    "2026-08-01", periods=fc.MIN_HISTORY_ROWS, freq="h", tz="UTC"
+                ),
+            }
+        )
         monkeypatch.setattr(fc, "read_recent_features_df", lambda city: recent)
         monkeypatch.setattr(fc, "read_features_df", _must_not_be_called)
         assert len(fc.load_feature_history("Lahore")) == fc.MIN_HISTORY_ROWS
@@ -222,9 +235,19 @@ class TestFeatureHistory:
     def test_short_bounded_read_falls_back_to_full_history(self, monkeypatch):
         """Happens when the offline store has fallen behind the lookback window."""
         monkeypatch.setattr(
-            fc, "read_recent_features_df", lambda city: pd.DataFrame({"city_name": ["Lahore"]})
+            fc,
+            "read_recent_features_df",
+            lambda city: pd.DataFrame(
+                {"city_name": ["Lahore"], "timestamp": pd.to_datetime(["2026-08-01"], utc=True)}
+            ),
         )
-        monkeypatch.setattr(fc, "read_features_df", lambda: pd.DataFrame({"city_name": ["full"]}))
+        monkeypatch.setattr(
+            fc,
+            "read_features_df",
+            lambda: pd.DataFrame(
+                {"city_name": ["full"], "timestamp": pd.to_datetime(["2026-08-01"], utc=True)}
+            ),
+        )
         assert fc.load_feature_history("Lahore")["city_name"].tolist() == ["full"]
 
 def _must_not_be_called():

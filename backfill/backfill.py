@@ -80,9 +80,16 @@ def fetch_range(lat, lon, api_key, start_date, end_date):
 
 
 def build_rows(city_name, pollution_list, weather_df):
+    # Asking either API for a range ending today returns the rest of the calendar
+    # day as forecast. Those hours are not observations, so the range is clamped
+    # here rather than in the caller: this is the one place every backfilled row
+    # passes through.
+    current_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     rows = []
     for entry in pollution_list:
         timestamp = datetime.fromtimestamp(entry["dt"], tz=timezone.utc)
+        if timestamp > current_hour:
+            continue
         if timestamp not in weather_df.index:
             continue
         weather = weather_df.loc[timestamp]

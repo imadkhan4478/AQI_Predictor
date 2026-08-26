@@ -431,7 +431,10 @@ Yearly mean AQI: 2020:387  2021:270  2022:270  2023:269
                  2024:245  2025:198  2026:162
 ```
 
-**Lahore's air quality has improved ~58% since 2020.** The model trains on a
+**Lahore's air quality has improved ~58% since 2020.** *(Corrected later — see
+"The 58% figure was wrong" below. The comparison used two partial years; across
+complete years the decline is ~27%. The conclusion drawn here survives, the
+magnitude does not.)* The model trains on a
 dirtier era and systematically over-predicts. Persistence adapts for free because
 it starts from today's actual reading. This also explains why Ridge beats tree
 models here — linear models extrapolate a trend; trees only reproduce values seen
@@ -503,7 +506,8 @@ to **14 months** into a frozen future. Production does nothing of the sort: the
 training pipeline retrains **daily** and the model only ever forecasts 24–72h
 ahead. It always has last week's data.
 
-Against a pollution level that has fallen ~58% since 2020, that setup was mostly
+Against a falling pollution level (~58% as measured at the time; ~27% once the
+partial years were excluded — see the correction below), that setup was mostly
 scoring the model on its inability to predict a multi-year trend — a task it
 never faces. The tell came from the shrinkage experiment, where the blend weight
 chosen on validation (`w* = 0.90–1.00`, "trust the model") was contradicted by
@@ -923,6 +927,62 @@ Also logged from the run: statsmodels emits `ConvergenceWarning: Maximum
 Likelihood optimization failed to converge` for ARIMA(2,1,2) at the longer
 horizons. The forecasts are still usable and the ranking is stable, but it is a
 genuine limitation of the statistical baseline rather than something to omit.
+
+### The 58% figure was wrong, and it was in five places
+
+Re-running the EDA over the full history and *reading the year-by-month heatmap*
+exposed a bad number that had propagated into the README, this log, the notebook
+title, and two module docstrings.
+
+Mean AQI by calendar year:
+
+| Year | Mean AQI | Coverage |
+|---|---|---|
+| 2020 | 387 | **November–December only** |
+| 2021 | 270 | full |
+| 2022 | 270 | full |
+| 2023 | 268 | full |
+| 2024 | 244 | full |
+| 2025 | 198 | full |
+| 2026 | 162 | **January–August only** |
+
+The archive opens on 2020-11-27 — inside peak smog season — and ends in August,
+the cleanest part of the year. So "387 → 162, a 58% decline" compares a
+winter-only stub against a summer-weighted one, with both biases pointing the
+same way. **Across complete years the decline is 270 → 198, about 27%** — roughly
+7% a year, still substantial, but less than half what was claimed.
+
+The heatmap says something more useful than either figure. The improvement is
+concentrated in the **clean season**: summer months pale out sharply across 2025
+and 2026, while **January 2024 is the darkest cell in the whole record**. Winter
+smog has barely improved. For a system whose alerts matter most in winter, that
+is the finding worth reporting, not a headline percentage.
+
+None of the modelling conclusions change — the regime shift is real (training
+window mean 262 against the test window's 169) and the delta target is still the
+right response. Only the number was wrong. The notebook now computes the decline
+across complete years only and greys out the partial ones with their coverage
+labelled on the bar, so the figure cannot be misread the same way again.
+
+**Other figures corrected in the same pass**, all verified against the executed
+notebook rather than carried forward:
+
+| Claim | Was | Actually |
+|---|---|---|
+| Rows | 49,115 | **49,153** |
+| Span | to 2026-08-12 | to **2026-08-15 02:00 UTC** |
+| Missing hours | "~5%" | **1.9%** (938 of 50,091) |
+| PM2.5 dominance | "almost always" | **89.2%** of hours (ozone 10.4%) |
+
+The ~5% figure was measured on the original 2,065-row window and never rechecked
+after the backfill made the dataset 24× larger — the same class of mistake as the
+58%: a number that was true when written and quietly stopped being true.
+
+Also newly measured: autocorrelation of hourly AQI is **0.77 / 0.68 / 0.63** at
+24/48/72h, with a visible echo at multiples of 24 hours from the daily cycle.
+Those three values line up almost exactly with persistence's R² of 0.808 / 0.704
+/ 0.622, which is the most compact explanation of why the naive baseline is so
+hard to beat.
 
 ---
 

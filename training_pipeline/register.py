@@ -45,9 +45,10 @@ def walk_forward_evaluate(X, y_delta, timestamps, current_aqi, horizon_hours):
     and score only the following month.
 
     A single frozen split measures something production never does -- predicting
-    a year ahead from a stale model -- and against a pollution level that has
-    fallen ~58% since 2020 it mostly scores the model on its inability to track a
-    multi-year trend. The same model scores 0.738 frozen and 0.831 walk-forward.
+    a year ahead from a stale model -- and against a falling pollution level (mean
+    262 over the training window against 169 over the test window) it mostly scores
+    the model on its inability to track a trend. The same model scores 0.738 frozen
+    and 0.831 walk-forward.
 
     Returns (metrics_at_best_weight, persistence_metrics, best_weight).
     """

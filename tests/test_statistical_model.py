@@ -14,9 +14,9 @@ from training_pipeline import statistical_model as sm
 def context(hours=600, test_hours=80, gaps=((200, 207), (400, 404)), horizon_hours=24):
     """A gap-free hourly series plus the split boundaries predict_delta needs.
 
-    `gaps` removes hours from the *source* readings, mirroring the ~5% of hours
-    missing in the feature store, before the series is completed the way
-    train.py completes it.
+    `gaps` removes hours from the *source* readings, mirroring the hours missing
+    in the feature store, before the series is completed the way train.py
+    completes it.
     """
     index = pd.date_range("2026-01-01", periods=hours, freq="h", tz="UTC")
     values = 180 + 30 * np.sin(2 * np.pi * np.arange(hours) / 24) + np.linspace(0, -20, hours)

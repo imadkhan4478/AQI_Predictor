@@ -47,7 +47,7 @@ def add_lag_features(df):
     """Lagged and rolling AQI, computed on a regular hourly grid.
 
     Every window is shifted by 1 first so a row never sees its own AQI in its own
-    rolling statistics, and the grid is made continuous because ~5% of hours are
+    rolling statistics, and the grid is made continuous because ~2% of hours are
     missing -- shifting by row position across a gap mislabels the lag.
     """
     df = df.sort_values("timestamp").set_index("timestamp").asfreq("h")
@@ -110,8 +110,9 @@ def load_training_data(horizon_hours=FORECAST_HORIZON_HOURS, target=TARGET_COLUM
 
     `target` selects the absolute future AQI or the change from now. Models are
     trained on the change and anchored to the latest reading, which tracks the
-    pollution level for free -- Lahore's mean AQI has fallen from ~387 (2020) to
-    ~162 (2026), and tree models cannot extrapolate below what they trained on.
+    pollution level for free -- mean AQI is 262 over the training window against 169
+    over the test window, and tree models cannot extrapolate below what they trained
+    on.
     """
     df = read_features_df()
     df = add_time_features(df)

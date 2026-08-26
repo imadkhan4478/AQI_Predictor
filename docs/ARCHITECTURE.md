@@ -46,9 +46,9 @@ OpenWeather (current weather + pollutants)      Open-Meteo archive (historical w
 These are not style preferences. Each one was arrived at by measurement, and
 "simplifying" any of them reintroduces a bug that has already happened here.
 
-**Labels are matched by timestamp, never by row shift.** About 5% of hours are
-missing; a positional shift pairs rows with the wrong future value and reports no
-error.
+**Labels are matched by timestamp, never by row shift.** About 2% of hours are
+missing (938 of 50,091); a positional shift pairs rows with the wrong future value
+and reports no error.
 
 **Splits are chronological *and* purged.** Training rows whose label falls inside
 the test window must be dropped. Without the purge, ~27% of the apparent skill at

@@ -106,3 +106,84 @@ class TestDegradation:
         monkeypatch.setattr(dash, "fetch_payload", boom)
         with pytest.raises(RuntimeError):
             dash.fetch_payload_or_last_good("Lahore")
+
+
+class TestEvaluationPanel:
+    """The walk-forward comparison is the project's strongest claim; it has to
+    reach the page correctly and it has to be honest about partial wins."""
+
+    def details(self, metrics, horizon=24, version=7, weight=0.35):
+        return [
+            {
+                "horizon_hours": horizon,
+                "model_name": f"aqi_forecast_{horizon}h",
+                "version": version,
+                "blend_weight": weight,
+                "metrics": metrics,
+            }
+        ]
+
+    def test_a_clear_win_lists_every_metric(self):
+        wins = dash.beats_baseline(
+            {
+                "R2": 0.715, "persistence_R2": 0.628,
+                "MAE": 24.0, "persistence_MAE": 30.0,
+                "RMSE": 40.0, "persistence_RMSE": 52.0,
+            }
+        )
+        assert wins == ["R2", "MAE", "RMSE"]
+
+    def test_the_real_24h_result_does_not_claim_an_mae_win(self):
+        """Production 24h: R2 0.832 vs 0.814, but MAE 30.2 against 29.8 -- worse.
+        The panel must not round that into "beats the baseline"."""
+        wins = dash.beats_baseline(
+            {
+                "R2": 0.832, "persistence_R2": 0.814,
+                "MAE": 30.2, "persistence_MAE": 29.8,
+                "RMSE": 45.0, "persistence_RMSE": 48.0,
+            }
+        )
+        assert wins == ["R2", "RMSE"]
+        assert "MAE" not in wins
+
+    def test_a_missing_baseline_is_never_counted_as_a_win(self):
+        """persistence_RMSE does not exist on models registered before it was
+        added; absent evidence is not evidence."""
+        wins = dash.beats_baseline({"R2": 0.8, "persistence_R2": 0.7, "RMSE": 40.0})
+        assert wins == ["R2"]
+
+    def test_losing_on_everything_says_so(self):
+        wins = dash.beats_baseline(
+            {
+                "R2": 0.5, "persistence_R2": 0.7,
+                "MAE": 40.0, "persistence_MAE": 30.0,
+                "RMSE": 60.0, "persistence_RMSE": 50.0,
+            }
+        )
+        assert wins == []
+        row = dash.evaluation_rows(self.details({
+            "R2": 0.5, "persistence_R2": 0.7,
+            "MAE": 40.0, "persistence_MAE": 30.0,
+            "RMSE": 60.0, "persistence_RMSE": 50.0,
+        }))[0]
+        assert row["Beats baseline on"] == "nothing"
+
+    def test_row_carries_the_baseline_beside_the_model(self):
+        row = dash.evaluation_rows(self.details({
+            "R2": 0.832, "persistence_R2": 0.814,
+            "MAE": 30.2, "persistence_MAE": 29.8,
+            "RMSE": 45.0, "persistence_RMSE": 48.0,
+        }))[0]
+        assert row["Horizon"] == "24h"
+        assert row["R2"] == "0.832" and row["R2 baseline"] == "0.814"
+        assert row["MAE"] == "30.2" and row["MAE baseline"] == "29.8"
+        assert row["Blend weight"] == "0.35"
+        assert row["Version"] == 7
+
+    def test_missing_numbers_render_as_a_dash_not_a_zero(self):
+        row = dash.evaluation_rows(self.details({}))[0]
+        assert row["R2"] == "—" and row["RMSE baseline"] == "—"
+
+    def test_an_unregistered_weight_renders_as_a_dash(self):
+        row = dash.evaluation_rows(self.details({}, weight=None))[0]
+        assert row["Blend weight"] == "—"

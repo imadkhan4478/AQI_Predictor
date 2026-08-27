@@ -21,6 +21,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from feature_pipeline.aqi import _CATEGORIES
+from monitoring import report, start_monitoring
 from serving.forecast import (
     HORIZONS_HOURS,
     ForecastUnavailable,
@@ -41,6 +42,8 @@ try:
             os.environ.setdefault(_key, _value)
 except Exception:  # no secrets configured -- normal when running locally from .env
     pass
+
+start_monitoring("dashboard")
 
 # Set AQI_API_URL to read from the FastAPI service instead of loading models into
 # the Streamlit process. Both paths return the same payload, so this is a
@@ -117,9 +120,10 @@ def fetch_payload_or_last_good(city_name):
     """
     try:
         payload = fetch_payload(city_name)
-    except Exception:
+    except Exception as error:
         retained = last_good_payload().get("payload")
         traceback.print_exc()
+        report(error, city=city_name, served_retained_payload=retained is not None)
         if retained is None:
             raise
         return retained, False
@@ -189,6 +193,84 @@ def render_freshness(payload):
     else:
         st.success(line)
     return age_hours
+
+
+REPORT_URL = (
+    "https://github.com/imadkhan4478/AQI_Predictor/blob/main/docs/"
+    "AQI_Predictor_Technical_Report.pdf"
+)
+
+
+def beats_baseline(metrics):
+    """Which metrics the blend actually wins on, computed rather than asserted.
+
+    R2 rewards being higher, MAE and RMSE reward being lower. Comparing each one
+    separately matters here: the blend wins clearly on R2 and RMSE while being
+    level with persistence on MAE at the shorter horizons, because its advantage
+    is in large errors rather than typical ones. Stating "beats the baseline"
+    without saying on what would be the kind of claim this project exists to avoid.
+    """
+    wins = []
+    if _better(metrics.get("R2"), metrics.get("persistence_R2"), higher_is_better=True):
+        wins.append("R2")
+    if _better(metrics.get("MAE"), metrics.get("persistence_MAE"), higher_is_better=False):
+        wins.append("MAE")
+    if _better(metrics.get("RMSE"), metrics.get("persistence_RMSE"), higher_is_better=False):
+        wins.append("RMSE")
+    return wins
+
+
+def _better(model_value, baseline_value, higher_is_better):
+    if model_value is None or baseline_value is None:
+        return False
+    return model_value > baseline_value if higher_is_better else model_value < baseline_value
+
+
+def _number(value, places=3):
+    return "—" if value is None else f"{value:.{places}f}"
+
+
+def evaluation_rows(details):
+    """One row per horizon: the blend beside the baseline it has to beat."""
+    rows = []
+    for info in details:
+        metrics = info["metrics"] or {}
+        wins = beats_baseline(metrics)
+        rows.append(
+            {
+                "Horizon": f"{info['horizon_hours']}h",
+                "R2": _number(metrics.get("R2")),
+                "R2 baseline": _number(metrics.get("persistence_R2")),
+                "MAE": _number(metrics.get("MAE"), 1),
+                "MAE baseline": _number(metrics.get("persistence_MAE"), 1),
+                "RMSE": _number(metrics.get("RMSE"), 1),
+                "RMSE baseline": _number(metrics.get("persistence_RMSE"), 1),
+                "Beats baseline on": ", ".join(wins) if wins else "nothing",
+                "Blend weight": _number(info["blend_weight"], 2),
+                "Version": info["version"],
+            }
+        )
+    return rows
+
+
+def render_evaluation(details):
+    """The held-out comparison, on the page rather than only in the report.
+
+    This is the project's strongest claim and it lived in a PDF. A reader cannot
+    judge a forecast of 117 without knowing what the naive alternative scores, so
+    the baseline sits in the same table as the model at the same size.
+    """
+    st.subheader("Model and evaluation")
+    st.dataframe(evaluation_rows(details), hide_index=True, use_container_width=True)
+    st.caption(
+        "Walk-forward evaluation: retrain at successive monthly origins and score only "
+        "the following month, never a single frozen split. **Baseline** is persistence — "
+        "tomorrow equals today — which for hourly AQI is a strong competitor, not a "
+        "straw man. Each forecast is `current AQI + blend weight x predicted change`, so "
+        "a weight of 0 would be the baseline exactly and the weight is the share of the "
+        f"forecast that is model rather than persistence. Full method in the "
+        f"[technical report]({REPORT_URL})."
+    )
 
 
 def render_hero(reading):
@@ -304,6 +386,9 @@ def main():
 
     st.plotly_chart(plot_forecast(payload), use_container_width=True)
 
+    details = fetch_model_details()
+    render_evaluation(details)
+
     col_a, col_b = st.columns(2)
     with col_a:
         with st.expander("Why does the model predict this? (SHAP feature importance)"):
@@ -319,19 +404,9 @@ def main():
                     "`python -m training_pipeline.explain`."
                 )
     with col_b:
-        with st.expander("Model details"):
-            st.caption(
-                "Each model predicts the change in AQI; the forecast shown is "
-                "`current AQI + blend weight × predicted change`. A blend weight of 0 "
-                "would be the naive persistence baseline."
-            )
-            for info in fetch_model_details():
-                weight = info["blend_weight"]
-                weight_text = "not registered" if weight is None else f"{weight:.2f}"
-                st.write(
-                    f"**{info['horizon_hours']}h model** — v{info['version']} · "
-                    f"blend weight {weight_text}"
-                )
+        with st.expander("Raw registry metrics"):
+            for info in details:
+                st.write(f"**{info['model_name']}** — version {info['version']}")
                 st.json(info["metrics"])
 
 

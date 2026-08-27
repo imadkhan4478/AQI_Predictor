@@ -146,3 +146,37 @@ class TestFutureRows:
         patch_offline(monkeypatch, stamps.sort_values().reset_index(drop=True))
         with pytest.raises(RuntimeError, match="More rows than hours"):
             pl.verify_offline_freshness("Lahore", OBSERVED_AT)
+
+
+class TestFailureIsLegible:
+    """Run #443 failed with 'exit code 1' and no annotation naming a cause, which
+    left the reason readable only in a log panel that would not render."""
+
+    def test_an_unexpected_failure_is_annotated_with_its_cause(self, monkeypatch, capsys):
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+        def boom():
+            raise KeyError("OPENWEATHER_API_KEY")
+
+        monkeypatch.setattr(pl, "run", boom)
+        with pytest.raises(KeyError):
+            pl.main()
+        printed = capsys.readouterr().out
+        assert "::error title=Feature pipeline::KeyError" in printed
+        assert "OPENWEATHER_API_KEY" in printed
+
+    def test_the_exception_still_propagates_so_the_run_goes_red(self, monkeypatch):
+        """Annotating must not swallow the failure."""
+
+        def boom():
+            raise RuntimeError("insert rejected")
+
+        monkeypatch.setattr(pl, "run", boom)
+        with pytest.raises(RuntimeError, match="insert rejected"):
+            pl.main()
+
+    def test_a_successful_run_is_not_annotated_as_a_failure(self, monkeypatch, capsys):
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        monkeypatch.setattr(pl, "run", lambda: None)
+        pl.main()
+        assert "::error" not in capsys.readouterr().out

@@ -87,7 +87,31 @@ secrets; no secret has ever been committed, verified by a full history scan.
 | `CITY_NAME` | Label stored with every row, and the dashboard title |
 | `CITY_LAT` / `CITY_LON` | Coordinates passed to both APIs |
 
-`AQI_API_URL` is optional and read only by the dashboard.
+Two optional variables, both no-ops when unset:
+
+| Variable | Effect when set |
+|---|---|
+| `AQI_API_URL` | The dashboard reads the JSON API instead of loading models itself |
+| `SENTRY_DSN` | Exceptions are reported, including the ones the dashboard handles quietly |
+
+## Deploying the API
+
+The dashboard runs on Streamlit Community Cloud from `app/app.py` and needs no
+deployment configuration. The API ships a `Procfile`, so any buildpack host runs it:
+
+```
+web: uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}
+```
+
+Set the same six secrets in the host's config, plus `SENTRY_DSN` if you want error
+reports. Python version comes from `.python-version`.
+
+**Deploy the API for callers, not for the dashboard.** `AQI_API_URL` is deliberately
+left unset in the deployed dashboard: pointing it at a hosted API would make the page
+depend on a service that can sleep, and a free-tier cold start exceeding the read
+timeout turns a working dashboard into a spinner. The dashboard imports
+`serving/forecast.py` in-process; the API is a second consumer of the same module,
+not a layer beneath it.
 
 ## How it runs
 

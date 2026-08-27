@@ -15,6 +15,7 @@ from feature_pipeline.hopsworks_store import (
     get_feature_group,
     offline_timestamps,
 )
+from monitoring import monitored_job, note, start_monitoring
 
 load_dotenv()
 
@@ -85,16 +86,17 @@ def get_previous_hour_aqi(lat, lon, api_key, observed_at):
     return aqi
 
 
-def announce(message, level="notice"):
+def announce(message, level="notice", title="Offline freshness"):
     """Report to the log, and to the run summary when running in Actions.
 
     A number buried in a collapsed log step is not monitoring. As an annotation it
-    appears on the run page and in the checks API, so freshness can be read without
-    opening anything.
+    appears on the run page and in the checks API, so the state can be read without
+    expanding anything -- which also happens to be the only way to read it when the
+    log viewer will not render.
     """
     print(message, flush=True)
     if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::{level} title=Offline freshness::{message}", flush=True)
+        print(f"::{level} title={title}::{message}", flush=True)
 
 
 def verify_offline_freshness(city_name, observed_at):
@@ -120,6 +122,11 @@ def verify_offline_freshness(city_name, observed_at):
             f"UNVERIFIED: could not read the offline store ({type(error).__name__}: {error}). "
             "Row inserted; freshness not checked.",
             level="warning",
+        )
+        note(
+            "Offline freshness unverified",
+            city=city_name,
+            error=f"{type(error).__name__}: {error}",
         )
         return None
 
@@ -233,5 +240,29 @@ def run():
     verify_offline_freshness(city_name, row["timestamp"])
 
 
-if __name__ == "__main__":
+@monitored_job("aqi-feature-pipeline", crontab="0 * * * *")
+def _run_checked_in():
+    """The pipeline, wrapped so Sentry hears about every run.
+
+    Separate from run() so the check-in covers exactly the work, and so run()
+    stays callable from a test or a shell without a monitor."""
     run()
+
+
+def main():
+    """Run the pipeline, and make any failure legible from the run summary.
+
+    A red run whose cause is only in the log tells you that something broke, not
+    what. Annotating the exception means the reason is on the run page beside the
+    freshness verdict, in the same place and the same format.
+    """
+    start_monitoring("feature-pipeline")
+    try:
+        _run_checked_in()
+    except Exception as error:
+        announce(f"{type(error).__name__}: {error}", level="error", title="Feature pipeline")
+        raise
+
+
+if __name__ == "__main__":
+    main()

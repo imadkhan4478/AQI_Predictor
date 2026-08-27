@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
+from monitoring import start_monitoring
 from training_pipeline.baseline_models import build_gradient_boosting, predict_persistence
 from training_pipeline.data import DELTA_COLUMN, FORECAST_HORIZON_HOURS, load_training_data
 from training_pipeline.evaluate import evaluate
@@ -38,6 +39,18 @@ MIN_TRAIN_ROWS = 2000
 
 # Hopsworks occasionally returns a 500 from its own metadata layer mid-upload.
 MAX_REGISTER_ATTEMPTS = 3
+
+
+def announce(message, title, level="notice"):
+    """Report to the log, and to the run summary when running in Actions.
+
+    Held-out metrics are the most valuable thing this job produces and they were
+    only ever printed into a collapsed log step. As an annotation they land on the
+    run page, so a retrain's effect on skill is visible without opening anything.
+    """
+    print(message, flush=True)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::{level} title={title}::{message}", flush=True)
 
 
 def walk_forward_evaluate(X, y_delta, timestamps, current_aqi, horizon_hours):
@@ -107,11 +120,20 @@ def run(horizon_hours=FORECAST_HORIZON_HOURS):
     metrics["blend_weight"] = blend_weight
     metrics["persistence_R2"] = baseline["R2"]
     metrics["persistence_MAE"] = baseline["MAE"]
+    metrics["persistence_RMSE"] = baseline["RMSE"]
+    metrics["evaluation_origins"] = float(EVALUATION_ORIGINS)
 
     print(f"  blend weight: {blend_weight:.2f}")
     print(f"  model       : R2={metrics['R2']:.3f} MAE={metrics['MAE']:.1f} RMSE={metrics['RMSE']:.1f}")
     print(f"  persistence : R2={baseline['R2']:.3f} MAE={baseline['MAE']:.1f} RMSE={baseline['RMSE']:.1f}")
     print(f"  beats persistence: {metrics['R2'] > baseline['R2']}")
+    announce(
+        f"{horizon_hours}h: blend R2={metrics['R2']:.3f} MAE={metrics['MAE']:.1f} "
+        f"RMSE={metrics['RMSE']:.1f} at w={blend_weight:.2f} | "
+        f"persistence R2={baseline['R2']:.3f} MAE={baseline['MAE']:.1f} "
+        f"RMSE={baseline['RMSE']:.1f}",
+        title=f"Walk-forward {horizon_hours}h",
+    )
 
     # Refit on every row: the evaluation above already established what the model
     # is worth, so the shipped artifact should learn from all available data. The
@@ -169,4 +191,5 @@ def run(horizon_hours=FORECAST_HORIZON_HOURS):
 
 
 if __name__ == "__main__":
+    start_monitoring("training-pipeline")
     run()

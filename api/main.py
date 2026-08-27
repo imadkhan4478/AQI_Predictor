@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from monitoring import start_monitoring
 from serving.forecast import (
     HORIZONS_HOURS,
     ForecastUnavailable,
@@ -26,6 +27,8 @@ load_dotenv()
 # The feature store gains one row per hour, so re-reading more often than that
 # cannot produce new information.
 FEATURE_CACHE_SECONDS = 600
+
+start_monitoring("api")
 
 app = FastAPI(
     title="AQI Predictor API",

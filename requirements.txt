@@ -27,6 +27,10 @@ plotly==6.9.0
 fastapi==0.140.0
 uvicorn==0.51.0
 
+# Error reporting. Optional at runtime: monitoring.py is a no-op without
+# SENTRY_DSN, so nothing here needs an account.
+sentry-sdk==2.44.0
+
 # Testing
 pytest==9.1.1
 httpx==0.28.1   # required by fastapi.testclient

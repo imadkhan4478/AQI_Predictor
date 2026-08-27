@@ -1106,7 +1106,44 @@ at the Jobs UI for a problem the Jobs UI cannot fix cost an hour today.
 Remedy applied: backfill from 2026-08-14, overlapping the intact data by a day so
 the upsert leaves no one-hour seam at the join.
 
-### 6.6 A note from reviewing the competition
+### 6.6 The repair introduced eleven hours that had not happened
+
+The backfill of 15 -> 26 August completed green. The next freshness check reported:
+
+```
+CURRENT: newest offline row 2026-08-26 23:00:00+00:00, -11.0h behind the insert,
+         59/48 hours present
+```
+
+`CURRENT`, on a **negative** lag and **more rows than hours**. Both source APIs
+return the remainder of the calendar day as forecast when a requested range ends
+today, and nothing in `build_rows` stopped at the last complete hour, so the
+backfill wrote 13:00-23:00 UTC as though those hours had been observed. 48 + 11 = 59.
+
+Left alone, the training run at 02:00 UTC would have used forecast values as
+features *and* as labels, and refit the blend weights against them -- a model that
+scores well by learning to imitate somebody else's forecast. Nothing in the
+pipeline would have objected.
+
+Blocked in three places, because any one of them alone is insufficient:
+
+| Where | Guard | Why it is needed separately |
+|---|---|---|
+| `backfill/build_rows` | skip any hour after the current one | stops it recurring |
+| `training_pipeline.data.drop_future_rows` | filter before features are built, on the training *and* serving paths | the rows already written cannot be un-written by fixing the writer |
+| `verify_offline_freshness` | negative lag -> `FUTURE`; coverage > 110% -> `DUPLICATED` | the check itself reported `CURRENT` on a negative lag |
+
+The third row is the point. Two versions of this assertion have now passed while
+the store was broken -- first by measuring the newest row instead of coverage,
+then by not considering that a lag could be negative. Each time the check
+described something true and irrelevant.
+
+The store repairs itself: the forecast rows are keyed to hours later today, and
+each hourly insert upserts the real observation over one of them, so the last is
+replaced at 23:00 UTC. Until then the pipeline fails hourly, correctly, and the
+insert still happens because the check runs after the write.
+
+### 6.7 A note from reviewing the competition
 
 Three classmate dashboards were reviewed the same afternoon. Two of the three
 displayed a human-readable local timestamp prominently; one displayed both the

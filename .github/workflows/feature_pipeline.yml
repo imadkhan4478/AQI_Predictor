@@ -2,7 +2,7 @@ name: Feature Pipeline
 
 on:
   schedule:
-    - cron: "0 * * * *" # every hour
+    - cron: "23 * * * *" # hourly, off the top of the hour
   workflow_dispatch:
 
 jobs:

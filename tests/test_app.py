@@ -187,3 +187,65 @@ class TestEvaluationPanel:
     def test_an_unregistered_weight_renders_as_a_dash(self):
         row = dash.evaluation_rows(self.details({}, weight=None))[0]
         assert row["Blend weight"] == "—"
+
+
+class TestRegistryKeyMangling:
+    """Hopsworks rewrites metric keys on the way in. These are the keys actually
+    read back from the registry on 2026-08-27 -- note `persistence__r2` with two
+    underscores while top-level `MAE` and `R2` survive untouched. An exact-match
+    lookup blanked every baseline column and reported that a model beating its
+    baseline beat nothing."""
+
+    AS_STORED = {
+        "MAE": 30.238176677122784,
+        "R2": 0.8316838404747994,
+        "blend_weight": 0.35000000000000003,
+        "persistence_mae": 29.838013799343965,
+        "persistence__r2": 0.8140342233136757,
+        "RMSE": 48.35603293806847,
+    }
+
+    def test_the_mangled_baseline_keys_are_found(self):
+        assert dash.metric(self.AS_STORED, "persistence_R2") == 0.8140342233136757
+        assert dash.metric(self.AS_STORED, "persistence_MAE") == 29.838013799343965
+
+    def test_unmangled_keys_still_resolve(self):
+        assert dash.metric(self.AS_STORED, "R2") == 0.8316838404747994
+        assert dash.metric(self.AS_STORED, "MAE") == 30.238176677122784
+
+    def test_a_genuinely_absent_metric_is_none(self):
+        """persistence_RMSE was added later, so these versions do not carry it."""
+        assert dash.metric(self.AS_STORED, "persistence_RMSE") is None
+
+    def test_the_real_row_renders_the_real_comparison(self):
+        row = dash.evaluation_rows(
+            [
+                {
+                    "horizon_hours": 24,
+                    "model_name": "aqi_forecast_24h",
+                    "version": 7,
+                    "blend_weight": 0.35,
+                    "metrics": self.AS_STORED,
+                }
+            ]
+        )[0]
+        assert row["R2"] == "0.832" and row["R2 baseline"] == "0.814"
+        assert row["MAE"] == "30.2" and row["MAE baseline"] == "29.8"
+        assert row["RMSE baseline"] == "—"
+        # Wins R2, loses MAE, RMSE not comparable -- and says exactly that.
+        assert row["Beats baseline on"] == "R2"
+
+    def test_no_baseline_at_all_is_distinguished_from_losing(self):
+        """"The blend lost" and "nobody wrote the comparison down" must not look
+        alike, for the same reason a missing blend weight withholds a horizon."""
+        absent = dash.evaluation_rows(
+            [{"horizon_hours": 24, "model_name": "m", "version": 1,
+              "blend_weight": 0.35, "metrics": {"R2": 0.8, "MAE": 30.0}}]
+        )[0]
+        assert absent["Beats baseline on"] == "no baseline recorded"
+
+        lost = dash.evaluation_rows(
+            [{"horizon_hours": 24, "model_name": "m", "version": 1, "blend_weight": 0.35,
+              "metrics": {"R2": 0.5, "persistence__r2": 0.7}}]
+        )[0]
+        assert lost["Beats baseline on"] == "nothing"

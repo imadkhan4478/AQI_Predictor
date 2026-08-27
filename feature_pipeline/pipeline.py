@@ -32,6 +32,12 @@ MAX_WINDOW_COVERAGE = 1.1
 
 MATERIALIZATION_JOB = "aqi_features_2_offline_fg_materialization"
 
+# An execution still non-terminal after this long is wedged, not working. The
+# stall of 2026-08-15 sat in Initializing for eleven days; a healthy run of this
+# job takes about four minutes.
+WEDGED_AFTER_MINUTES = 45
+NON_TERMINAL_STATES = {"INITIALIZING", "RUNNING", "STARTING_APP_MASTER", "ACCEPTED", "NEW"}
+
 
 def build_feature_row(city_name, weather, pollution, previous_aqi=None):
     components = pollution["list"][0]["components"]
@@ -99,7 +105,69 @@ def announce(message, level="notice", title="Offline freshness"):
         print(f"::{level} title={title}::{message}", flush=True)
 
 
-def verify_offline_freshness(city_name, observed_at):
+def revive_materialization(feature_group):
+    """Stop a wedged materialisation execution and start a fresh one.
+
+    Detecting the stall is worth little if the remedy is always a person in a web
+    UI. It has now happened twice in two days, and each time the offline store --
+    and therefore the dashboard, the API and training -- stood still until someone
+    noticed. So the pipeline attempts its own remedy and still fails the run: the
+    failure stays visible, and the next hourly insert finds the store current.
+
+    Everything here is best-effort. This runs only on the already-broken path, so
+    a failure to repair must not replace a clear diagnosis with a stack trace.
+    """
+    try:
+        job = feature_group.materialization_job
+        stopped = 0
+        for execution in job.get_executions():
+            state = str(getattr(execution, "state", "")).upper()
+            if state not in NON_TERMINAL_STATES:
+                continue
+            minutes = (getattr(execution, "duration", 0) or 0) / 60000
+            if minutes < WEDGED_AFTER_MINUTES:
+                announce(
+                    f"{MATERIALIZATION_JOB} is {state} after {minutes:.0f}m; leaving it alone",
+                    title="Materialisation",
+                )
+                return False
+            execution.stop()
+            stopped += 1
+
+        if not stopped:
+            # Nothing was wedged, so materialisation is not the reason the store is
+            # behind -- the inserts are. On 2026-08-27 the workflow fired three
+            # times in seventeen hours and the newest offline row was simply the
+            # last successful insert. Re-running a healthy job would have looked
+            # like a fix and changed nothing.
+            announce(
+                f"{MATERIALIZATION_JOB} has no wedged execution, so it is not the cause. "
+                "The offline store is behind because inserts have not been reaching it -- "
+                "check how often the workflow is actually firing.",
+                level="warning",
+                title="Materialisation",
+            )
+            return False
+
+        job.run(await_termination=False)
+    except Exception as error:
+        announce(
+            f"Could not revive {MATERIALIZATION_JOB} ({type(error).__name__}: {error}). "
+            "Stop its execution in the Hopsworks Jobs UI and run it again.",
+            level="warning",
+            title="Materialisation",
+        )
+        return False
+
+    announce(
+        f"Revived {MATERIALIZATION_JOB} (stopped {stopped} wedged execution(s)); "
+        "the next run should find the store current",
+        title="Materialisation",
+    )
+    return True
+
+
+def verify_offline_freshness(city_name, observed_at, feature_group=None):
     """Raise unless the offline store both reaches `observed_at` and covers the
     hours before it.
 
@@ -168,6 +236,8 @@ def verify_offline_freshness(city_name, observed_at):
 
     if lag_hours > STALE_AFTER_HOURS:
         announce(f"STALE: newest offline row {newest} is {lag_hours:.1f}h behind", level="error")
+        if feature_group is not None:
+            revive_materialization(feature_group)
         raise RuntimeError(_remedy(f"is {lag_hours:.1f}h behind", observed_at))
 
     if coverage < MIN_WINDOW_COVERAGE:
@@ -192,11 +262,21 @@ def verify_offline_freshness(city_name, observed_at):
 
 
 def _remedy(problem, observed_at):
+    """Name both causes rather than guessing between them.
+
+    An earlier version asserted a stalled materialisation job, which sent a person
+    to the Hopsworks Jobs UI to find every execution green: the store was behind
+    because GitHub had fired the "hourly" workflow three times in seventeen hours.
+    Two causes produce the same symptom, and the run summary should say so instead
+    of picking the one that happened last time.
+    """
     return (
-        f"Offline store {problem} while inserts are succeeding. The materialisation "
-        f"job {MATERIALIZATION_JOB} has almost certainly stalled -- stop its current "
-        "execution in the Hopsworks Jobs UI and run it again. The row for "
-        f"{observed_at} was inserted and is not lost."
+        f"Offline store {problem} while this insert succeeded. Two things cause this: "
+        f"the materialisation job {MATERIALIZATION_JOB} is wedged (check the Hopsworks "
+        "Jobs UI for a non-terminal execution), or the workflow has not been firing "
+        "often enough to keep the store fed (check the run history for gaps). The "
+        f"Materialisation annotation on this run says which. The row for {observed_at} "
+        "was inserted and is not lost."
     )
 
 
@@ -237,7 +317,7 @@ def run():
             )
             time.sleep(wait_seconds)
     print(f"Inserted feature row for {city_name} at {row['timestamp']} (AQI={row['aqi']})")
-    verify_offline_freshness(city_name, row["timestamp"])
+    verify_offline_freshness(city_name, row["timestamp"], feature_group=fg)
 
 
 @monitored_job("aqi-feature-pipeline", crontab="0 * * * *")

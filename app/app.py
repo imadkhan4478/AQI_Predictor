@@ -5,6 +5,7 @@ in-process or over HTTP from the FastAPI service when AQI_API_URL is set.
 """
 
 import os
+import re
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -81,7 +82,13 @@ CARD_CSS = """
 """
 
 
-@st.cache_resource
+# The training pipeline registers new versions daily. Without a TTL the models --
+# and the metrics shown beside them -- are whatever was in the registry when this
+# process started, which can be many days old on a long-lived deployment.
+MODEL_CACHE_SECONDS = 3600
+
+
+@st.cache_resource(ttl=MODEL_CACHE_SECONDS)
 def cached_models():
     """Cached as a resource, not data: model objects are not serialisable and
     belong to the process, not the session."""
@@ -201,6 +208,42 @@ REPORT_URL = (
 )
 
 
+def metric(metrics, name):
+    """Look up a registry metric tolerantly.
+
+    Hopsworks rewrites metric keys on the way in: `persistence_MAE` comes back as
+    `persistence_mae`, `persistence_R2` as `persistence__r2` with a doubled
+    underscore, while top-level `MAE` and `R2` survive untouched. An exact-match
+    lookup found neither, so the comparison columns rendered as "not recorded" and
+    the panel reported that a model beating its baseline beat nothing.
+
+    Matching on a normalised form -- lowercased, separators stripped -- works
+    whatever the exact rule turns out to be, and stops a storage-layer rename from
+    silently blanking the project's central claim again.
+    """
+    wanted = _key(name)
+    for key, value in (metrics or {}).items():
+        if _key(key) == wanted:
+            return value
+    return None
+
+
+def _key(name):
+    return re.sub(r"[^a-z0-9]", "", str(name).lower())
+
+
+def has_baseline(metrics):
+    """Whether any baseline figure was recorded for this model version.
+
+    "The blend lost" and "nobody wrote the comparison down" must never look alike
+    on the page -- the same reason a missing blend weight withholds a horizon
+    instead of defaulting to 1.0.
+    """
+    return any(
+        metric(metrics, f"persistence_{name}") is not None for name in ("R2", "MAE", "RMSE")
+    )
+
+
 def beats_baseline(metrics):
     """Which metrics the blend actually wins on, computed rather than asserted.
 
@@ -211,11 +254,11 @@ def beats_baseline(metrics):
     without saying on what would be the kind of claim this project exists to avoid.
     """
     wins = []
-    if _better(metrics.get("R2"), metrics.get("persistence_R2"), higher_is_better=True):
+    if _better(metric(metrics, "R2"), metric(metrics, "persistence_R2"), higher_is_better=True):
         wins.append("R2")
-    if _better(metrics.get("MAE"), metrics.get("persistence_MAE"), higher_is_better=False):
+    if _better(metric(metrics, "MAE"), metric(metrics, "persistence_MAE"), higher_is_better=False):
         wins.append("MAE")
-    if _better(metrics.get("RMSE"), metrics.get("persistence_RMSE"), higher_is_better=False):
+    if _better(metric(metrics, "RMSE"), metric(metrics, "persistence_RMSE"), higher_is_better=False):
         wins.append("RMSE")
     return wins
 
@@ -236,16 +279,22 @@ def evaluation_rows(details):
     for info in details:
         metrics = info["metrics"] or {}
         wins = beats_baseline(metrics)
+        if not has_baseline(metrics):
+            verdict = "no baseline recorded"
+        elif wins:
+            verdict = ", ".join(wins)
+        else:
+            verdict = "nothing"
         rows.append(
             {
                 "Horizon": f"{info['horizon_hours']}h",
-                "R2": _number(metrics.get("R2")),
-                "R2 baseline": _number(metrics.get("persistence_R2")),
-                "MAE": _number(metrics.get("MAE"), 1),
-                "MAE baseline": _number(metrics.get("persistence_MAE"), 1),
-                "RMSE": _number(metrics.get("RMSE"), 1),
-                "RMSE baseline": _number(metrics.get("persistence_RMSE"), 1),
-                "Beats baseline on": ", ".join(wins) if wins else "nothing",
+                "R2": _number(metric(metrics, "R2")),
+                "R2 baseline": _number(metric(metrics, "persistence_R2")),
+                "MAE": _number(metric(metrics, "MAE"), 1),
+                "MAE baseline": _number(metric(metrics, "persistence_MAE"), 1),
+                "RMSE": _number(metric(metrics, "RMSE"), 1),
+                "RMSE baseline": _number(metric(metrics, "persistence_RMSE"), 1),
+                "Beats baseline on": verdict,
                 "Blend weight": _number(info["blend_weight"], 2),
                 "Version": info["version"],
             }

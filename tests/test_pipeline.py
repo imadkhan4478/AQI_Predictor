@@ -180,3 +180,98 @@ class TestFailureIsLegible:
         monkeypatch.setattr(pl, "run", lambda: None)
         pl.main()
         assert "::error" not in capsys.readouterr().out
+
+
+class FakeExecution:
+    def __init__(self, state, duration_minutes):
+        self.state = state
+        self.duration = duration_minutes * 60000
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
+class FakeJob:
+    def __init__(self, executions):
+        self._executions = executions
+        self.runs = 0
+
+    def get_executions(self):
+        return self._executions
+
+    def run(self, await_termination=True):
+        self.runs += 1
+
+
+class FakeFeatureGroup:
+    def __init__(self, job):
+        self.materialization_job = job
+
+
+class TestReviveMaterialization:
+    """The job has stalled twice in two days. Detecting it is worth little if the
+    remedy is always a person in a web UI."""
+
+    def test_a_wedged_execution_is_stopped_and_the_job_restarted(self):
+        wedged = FakeExecution("INITIALIZING", duration_minutes=16000)  # the 11-day stall
+        job = FakeJob([wedged])
+        assert pl.revive_materialization(FakeFeatureGroup(job)) is True
+        assert wedged.stopped is True
+        assert job.runs == 1
+
+    def test_a_job_that_is_merely_slow_is_left_alone(self):
+        """A healthy pass takes about four minutes. Killing one at ten would turn
+        a working system into a broken one."""
+        working = FakeExecution("RUNNING", duration_minutes=10)
+        job = FakeJob([working])
+        assert pl.revive_materialization(FakeFeatureGroup(job)) is False
+        assert working.stopped is False
+        assert job.runs == 0
+
+    def test_a_healthy_job_is_not_restarted_and_the_real_cause_is_named(self, monkeypatch, capsys):
+        """2026-08-27: every execution green, and the store still behind -- because
+        the workflow had fired three times in seventeen hours. Re-running a healthy
+        job would have looked like a fix and changed nothing."""
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        job = FakeJob([FakeExecution("FINISHED", duration_minutes=3)])
+        assert pl.revive_materialization(FakeFeatureGroup(job)) is False
+        assert job.runs == 0
+        printed = capsys.readouterr().out
+        assert "no wedged execution" in printed
+        assert "how often the workflow is actually firing" in printed
+
+    def test_an_api_failure_warns_and_names_the_manual_remedy(self, monkeypatch, capsys):
+        """This runs on the already-broken path; it must not replace a clear
+        diagnosis with a stack trace."""
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+        class Broken:
+            @property
+            def materialization_job(self):
+                raise RuntimeError("job metadata unavailable")
+
+        assert pl.revive_materialization(Broken()) is False
+        printed = capsys.readouterr().out
+        assert "::warning title=Materialisation" in printed
+        assert "Hopsworks Jobs UI" in printed
+
+    def test_staleness_triggers_a_revival_and_still_fails_the_run(self, monkeypatch):
+        """Self-healing must not hide the incident: the run stays red."""
+        wedged = FakeExecution("INITIALIZING", duration_minutes=1000)
+        job = FakeJob([wedged])
+        end = pd.Timestamp("2026-08-27 02:00:00+00:00")
+        patch_offline(monkeypatch, hourly_series(OFFLINE_LOOKBACK_HOURS, end=end))
+
+        with pytest.raises(RuntimeError, match="behind"):
+            pl.verify_offline_freshness(
+                "Lahore", OBSERVED_AT + pd.Timedelta(hours=25), feature_group=FakeFeatureGroup(job)
+            )
+        assert job.runs == 1
+
+    def test_no_feature_group_means_no_revival_attempt(self, monkeypatch):
+        """Callers that only want the verdict, and every existing test, stay valid."""
+        end = pd.Timestamp("2026-08-15 02:00:00+00:00")
+        patch_offline(monkeypatch, hourly_series(OFFLINE_LOOKBACK_HOURS, end=end))
+        with pytest.raises(RuntimeError):
+            pl.verify_offline_freshness("Lahore", OBSERVED_AT)

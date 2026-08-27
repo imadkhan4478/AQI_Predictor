@@ -29,3 +29,4 @@ jobs:
           CITY_NAME: ${{ secrets.CITY_NAME }}
           CITY_LAT: ${{ secrets.CITY_LAT }}
           CITY_LON: ${{ secrets.CITY_LON }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}

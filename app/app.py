@@ -4,11 +4,12 @@ Presentation only -- every number comes from serving/forecast.py, either
 in-process or over HTTP from the FastAPI service when AQI_API_URL is set.
 """
 
+import json
 import os
 import re
 import sys
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -27,8 +28,8 @@ from serving.forecast import (
     HORIZONS_HOURS,
     ForecastUnavailable,
     build_forecast,
-    load_feature_row,
     load_forecast_models,
+    load_observation,
     model_details,
 )
 
@@ -53,6 +54,10 @@ API_URL = os.environ.get("AQI_API_URL", "").rstrip("/")
 API_TIMEOUT_SECONDS = 30
 
 SHAP_PLOT_PATH = "reports/shap_feature_importance.png"
+SHAP_RANKING_PATH = "reports/shap_feature_importance.json"
+
+# Enough to show the shape of the ranking without turning the panel into a wall.
+SHAP_FEATURES_SHOWN = 15
 
 # The page is read by people in the city it forecasts, so timestamps are shown in
 # local time. UTC stays the storage and API format.
@@ -63,6 +68,12 @@ DISPLAY_TIMEZONE = os.environ.get("CITY_TZ", "Asia/Karachi")
 # days and nothing on the page contradicted it.
 STALE_AFTER_HOURS = 2
 BROKEN_AFTER_HOURS = 24
+
+# Lahore exceeds 300 in winter, but a fixed 0-500 axis flattens every summer
+# reading into the bottom fifth of the chart. 300 keeps the categories a reader
+# actually sees legible; the y-range is stated rather than auto-scaled so a
+# 6-point move never looks like a cliff.
+AXIS_CEILING = 300
 
 CARD_CSS = """
 <style>
@@ -103,7 +114,8 @@ def fetch_payload(city_name):
         response = requests.get(f"{API_URL}/forecast", timeout=API_TIMEOUT_SECONDS)
         response.raise_for_status()
         return response.json()
-    return build_forecast(city_name, cached_models(), load_feature_row(city_name))
+    feature_row, history = load_observation(city_name)
+    return build_forecast(city_name, cached_models(), feature_row, history=history)
 
 
 @st.cache_resource
@@ -145,6 +157,71 @@ def fetch_model_details():
         response.raise_for_status()
         return response.json()
     return model_details(cached_models())
+
+
+@st.cache_data(ttl=600)
+def shap_ranking():
+    """The committed SHAP ranking, or None if the explainability job has not run.
+
+    Read from disk rather than recomputed: SHAP on a boosted ensemble takes minutes,
+    which is a weekly job's work, not a page load's.
+    """
+    try:
+        with open(SHAP_RANKING_PATH, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def plot_shap(ranking, shown=SHAP_FEATURES_SHOWN):
+    """Feature importance as a chart a reader can hover, with real feature names."""
+    features = ranking["features"][:shown][::-1]
+    fig = go.Figure(
+        go.Bar(
+            x=[f["mean_abs_shap"] for f in features],
+            y=[f["label"] for f in features],
+            orientation="h",
+            marker_color="#4c78a8",
+            customdata=[f["column"] for f in features],
+            hovertemplate="%{y}<br>mean |SHAP| %{x:.2f} AQI<br><i>%{customdata}</i><extra></extra>",
+        )
+    )
+    fig.update_layout(
+        xaxis_title="Mean absolute contribution to the predicted change (AQI)",
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=26 * len(features) + 90,
+    )
+    return fig
+
+
+def render_explainability():
+    """Why the model predicts a change, in the features' own names.
+
+    The ranking is over the predicted *change* in AQI, not its level, so a feature
+    high in this list is one that moves the forecast away from persistence.
+    """
+    ranking = shap_ranking()
+    if ranking is None:
+        if os.path.exists(SHAP_PLOT_PATH):
+            st.image(SHAP_PLOT_PATH)
+            st.caption(
+                "Static plot from an earlier explainability run. Re-run the "
+                "Explainability workflow to get the interactive version."
+            )
+        else:
+            st.info(
+                f"No SHAP output at {SHAP_RANKING_PATH} yet — run the Explainability "
+                "workflow, or `python -m training_pipeline.explain`."
+            )
+        return
+
+    st.plotly_chart(plot_shap(ranking), use_container_width=True)
+    st.caption(
+        f"Mean absolute SHAP contribution over {ranking['explained_rows']:,} held-out rows, "
+        f"for the {ranking['horizon_hours']}h model. Attributions are on the predicted "
+        "**change** in AQI rather than its level, so a feature ranked highly here is one "
+        "that moves the forecast away from persistence."
+    )
 
 
 def readable_text_color(background_hex):
@@ -342,29 +419,129 @@ def render_legend():
     st.markdown(chips, unsafe_allow_html=True)
 
 
-def plot_forecast(payload):
-    points = [{"horizon_hours": 0, **payload["current"]}] + payload["forecast"]
-    labels = ["Now" if p["horizon_hours"] == 0 else f"+{p['horizon_hours']}h" for p in points]
+def forecast_points(payload):
+    """Forecast values stamped with the wall-clock time each one describes.
 
-    fig = go.Figure(
-        go.Bar(
-            x=labels,
-            y=[p["aqi"] for p in points],
-            marker_color=[p["color"] for p in points],
-            text=[p["aqi"] for p in points],
-            textposition="outside",
-            customdata=[p["category"] for p in points],
-            hovertemplate="<b>%{x}</b><br>AQI: %{y}<br>%{customdata}<extra></extra>",
+    "+24h" is a horizon, not a time. A reader planning tomorrow needs the date,
+    so the horizon becomes a timestamp anchored to the observation the forecast
+    was made from -- which is also why that observation's age is stated above.
+    """
+    observed_at = datetime.fromisoformat(payload["observed_at"])
+    points = []
+    for point in payload["forecast"]:
+        when = observed_at + timedelta(hours=point["horizon_hours"])
+        points.append({**point, "at": when})
+    return points
+
+
+def plot_forecast(payload):
+    """Observed history and the forecast on one timeline.
+
+    Three future numbers alone cannot show whether a forecast continues the recent
+    trend or breaks from it. Putting the observations behind them on the same axis
+    makes the forecast something a reader can judge rather than just read.
+    """
+    observed_at = datetime.fromisoformat(payload["observed_at"])
+    local = ZoneInfo(DISPLAY_TIMEZONE)
+    points = forecast_points(payload)
+
+    fig = go.Figure()
+
+    for lower, upper, name, _, color in _CATEGORIES:
+        fig.add_hrect(
+            y0=lower,
+            y1=min(upper, AXIS_CEILING),
+            fillcolor=color,
+            opacity=0.10,
+            line_width=0,
+            layer="below",
+            annotation_text=name,
+            annotation_position="top left",
+            annotation=dict(font_size=9, font_color=color, opacity=0.9),
+        )
+
+    history = payload.get("history") or []
+    if history:
+        fig.add_trace(
+            go.Scatter(
+                x=[datetime.fromisoformat(h["timestamp"]).astimezone(local) for h in history],
+                y=[h["aqi"] for h in history],
+                name="Observed",
+                mode="lines",
+                line=dict(color="#9aa4b2", width=2),
+                hovertemplate="%{x|%d %b %H:%M}<br>AQI %{y}<extra>Observed</extra>",
+            )
+        )
+
+    fig.add_trace(
+        go.Scatter(
+            x=[observed_at.astimezone(local)] + [p["at"].astimezone(local) for p in points],
+            y=[payload["current"]["aqi"]] + [p["aqi"] for p in points],
+            name="Forecast",
+            mode="lines+markers+text",
+            line=dict(color="#e8590c", width=3, dash="dot"),
+            marker=dict(size=11, color=[payload["current"]["color"]] + [p["color"] for p in points]),
+            text=[""] + [str(p["aqi"]) for p in points],
+            textposition="top center",
+            customdata=[payload["current"]["category"]] + [p["category"] for p in points],
+            hovertemplate="%{x|%d %b %H:%M}<br>AQI %{y}<br>%{customdata}<extra>Forecast</extra>",
         )
     )
-    fig.update_layout(
-        title="3-Day AQI Forecast",
-        yaxis_title="AQI",
-        showlegend=False,
-        margin=dict(t=50, b=10, l=10, r=10),
-        height=380,
+
+    fig.add_vline(
+        x=observed_at.astimezone(local).timestamp() * 1000,
+        line=dict(color="#9aa4b2", width=1, dash="dash"),
     )
+
+    fig.update_layout(
+        title="Observed AQI and 3-day forecast",
+        yaxis_title="AQI",
+        yaxis_range=[0, AXIS_CEILING],
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
+        margin=dict(t=60, b=10, l=10, r=10),
+        height=420,
+        hovermode="x unified",
+    )
+    fig.update_xaxes(tickformat="%d %b\n%H:%M")
     return fig
+
+
+def render_forecast_cards(payload):
+    """One card per horizon, dated, with the typical error beside the number.
+
+    A forecast of 141 with no sense of its error invites a precision it does not
+    have. The error shown is the walk-forward MAE for that horizon -- measured, not
+    assumed -- and the baseline's is shown beside it so the number means something.
+    """
+    details = {info["horizon_hours"]: info for info in fetch_model_details()}
+    columns = st.columns(len(payload["forecast"]) or 1)
+    for column, point in zip(columns, forecast_points(payload)):
+        info = details.get(point["horizon_hours"], {})
+        metrics = info.get("metrics") or {}
+        mae = metric(metrics, "MAE")
+        baseline_mae = metric(metrics, "persistence_MAE")
+        local_when = point["at"].astimezone(ZoneInfo(DISPLAY_TIMEZONE))
+        with column:
+            st.markdown(
+                f"""<div class="aqi-hero" style="background:{point['color']};
+                            color:{readable_text_color(point['color'])};">
+                        <div style="font-size:0.8rem;opacity:0.85;">
+                            {point['horizon_hours']}h &middot; {local_when:%a %d %b, %H:%M}
+                        </div>
+                        <div class="value" style="font-size:2.4rem;">{point['aqi']}</div>
+                        <div class="category" style="font-size:0.95rem;">{point['category']}</div>
+                    </div>""",
+                unsafe_allow_html=True,
+            )
+            if mae is None:
+                st.caption("Typical error not recorded for this model version")
+            elif baseline_mae is None:
+                st.caption(f"Typical error ±{mae:.0f} AQI (walk-forward MAE)")
+            else:
+                st.caption(
+                    f"Typical error ±{mae:.0f} AQI · baseline ±{baseline_mae:.0f} "
+                    "(walk-forward MAE)"
+                )
 
 
 def main():
@@ -375,7 +552,7 @@ def main():
     st.title(f"🌫️ AQI Predictor — {city_name}")
     st.caption(
         "3-day Air Quality Index forecast · gradient boosting blended with a persistence "
-        "baseline, retrained daily · feature pipeline runs hourly"
+        "baseline, retrained daily · feature pipeline scheduled hourly"
         + (f" · served by the API at {API_URL}" if API_URL else "")
     )
 
@@ -433,30 +610,19 @@ def main():
         alert_fn = st.error if payload["alert"]["severity"] == "critical" else st.warning
         alert_fn(f"**{payload['alert']['message']}**")
 
+    render_forecast_cards(payload)
     st.plotly_chart(plot_forecast(payload), use_container_width=True)
 
     details = fetch_model_details()
     render_evaluation(details)
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        with st.expander("Why does the model predict this? (SHAP feature importance)"):
-            if os.path.exists(SHAP_PLOT_PATH):
-                st.image(SHAP_PLOT_PATH)
-                st.caption(
-                    "Which features drive the predicted *change* in AQI. Regenerated by "
-                    "the explainability workflow."
-                )
-            else:
-                st.info(
-                    f"No SHAP plot at {SHAP_PLOT_PATH} yet — run "
-                    "`python -m training_pipeline.explain`."
-                )
-    with col_b:
-        with st.expander("Raw registry metrics"):
-            for info in details:
-                st.write(f"**{info['model_name']}** — version {info['version']}")
-                st.json(info["metrics"])
+    with st.expander("Why does the model predict this? (SHAP feature importance)"):
+        render_explainability()
+
+    with st.expander("Raw registry metrics"):
+        for info in details:
+            st.write(f"**{info['model_name']}** — version {info['version']}")
+            st.json(info["metrics"])
 
 
 if __name__ == "__main__":

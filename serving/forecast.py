@@ -5,6 +5,7 @@ assembled or how the blend is applied.
 """
 
 import numpy as np
+import pandas as pd
 
 from app.load_model import load_latest_model
 from feature_pipeline.aqi import aqi_category
@@ -79,12 +80,47 @@ def load_feature_history(city_name):
     return drop_future_rows(read_features_df())
 
 
+# Three days of observed AQI behind the forecast. Enough for a reader to see
+# whether the forecast continues the recent trend or breaks from it, which is the
+# question a bare set of three future numbers cannot answer.
+HISTORY_HOURS = 72
+
+
+def observed_history(city_rows, hours=HISTORY_HOURS):
+    """Recent observed AQI as JSON-ready records, oldest first."""
+    if city_rows.empty:
+        return []
+    cutoff = city_rows["timestamp"].max() - pd.Timedelta(hours=hours)
+    recent = city_rows[city_rows["timestamp"] >= cutoff].sort_values("timestamp")
+    return [
+        {"timestamp": timestamp.isoformat(), "aqi": int(round(float(aqi)))}
+        for timestamp, aqi in zip(recent["timestamp"], recent["aqi"])
+        if pd.notna(aqi)
+    ]
+
+
+def load_observation(city_name):
+    """(newest complete feature row, recent observed history) from a single read.
+
+    Both come from one frame on purpose: fetching the row and then the history
+    separately would double the feature-store round trip on the dashboard's cold
+    path, which is the slowest thing it does.
+    """
+    row, city_rows = _prepare(city_name)
+    return row, observed_history(city_rows)
+
+
 def load_feature_row(city_name):
     """Newest feature row, built through the same transformations training uses.
 
     The lag and rolling features depend on preceding hours, so the live row
     cannot be assembled from a single feature-store record.
     """
+    return _prepare(city_name)[0]
+
+
+def _prepare(city_name):
+    """(newest complete row, every row for this city with features attached)."""
     df = load_feature_history(city_name)
     city_rows = df[df["city_name"] == city_name]
     if city_rows.empty:
@@ -105,7 +141,7 @@ def load_feature_row(city_name):
             "No feature row yet has a complete set of lag features -- the store "
             "needs at least 72 contiguous hours of history."
         )
-    return complete.sort_values("timestamp").iloc[-1]
+    return complete.sort_values("timestamp").iloc[-1], city_rows
 
 
 def load_forecast_models(horizons=HORIZONS_HOURS):
@@ -144,7 +180,7 @@ def _describe(aqi_value):
     return {"aqi": int(aqi_value), "category": name, "severity": severity, "color": color}
 
 
-def build_forecast(city_name, models, feature_row):
+def build_forecast(city_name, models, feature_row, history=None):
     """Assemble the payload both front ends render.
 
     Returns JSON-serialisable types only, so FastAPI can return it unchanged and
@@ -179,6 +215,7 @@ def build_forecast(city_name, models, feature_row):
         "observed_at": feature_row["timestamp"].isoformat(),
         "current": current,
         "forecast": horizons,
+        "history": history or [],
         "unavailable_horizons": unavailable,
         "alert": _build_alert(current, horizons),
     }

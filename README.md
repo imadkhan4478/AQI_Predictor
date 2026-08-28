@@ -15,6 +15,7 @@ feeds both a JSON API and a Streamlit dashboard.
 | **Experiment log** | [`docs/EXPERIMENT_LOG.md`](docs/EXPERIMENT_LOG.md) — dated chronological record, every measurement |
 | **Exploratory analysis** | [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) — executed, renders on GitHub |
 | **Conventions** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — read before changing anything |
+| **Live dashboard** | <https://aqipredictor-ywkyutcdt9avvqymaaln69.streamlit.app/> |
 
 ## Headline result
 
@@ -119,12 +120,28 @@ Six workflows in `.github/workflows/`. Three are scheduled; three are manual.
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| **Feature Pipeline** | hourly | Fetch, compute the EPA AQI, write one row to the feature store |
+| **Feature Pipeline** | scheduled hourly | Fetch, compute the EPA AQI, write one row to the feature store, then assert the offline store is current |
 | **Training Pipeline** | daily, 02:00 UTC | Walk-forward evaluation and blend-weight fitting per horizon, then register three models |
 | **Tests** | every push and PR | pyflakes plus the full test suite. No secrets required |
 | **Analysis** | manual | Runs the six-model comparison and/or executes the EDA notebook, then commits `reports/model_comparison.json` and the notebook back |
 | **Explainability** | weekly + manual | Regenerates the SHAP plot from the deployed model and commits it back |
 | **Backfill** | manual | Loads multi-year history in monthly chunks |
+
+### "Scheduled hourly" is not the same as hourly
+
+GitHub queues scheduled workflows at low priority and drops them under load. Measured
+firings of this repository's hourly schedule:
+
+| Date | Firings (UTC) |
+|---|---|
+| 2026-08-26 | 12:27, 13:43, 14:32, 16:06, 18:31, 21:21 |
+| 2026-08-27 | 02:18, 13:11, 18:56 |
+
+Three to seven times a day, with gaps up to five hours. **This is the mechanism behind the
+1.9% of missing hours in the dataset** — not a gap in either source API. The cron minute was
+moved off `0` (the most contended minute on the platform) to `23` to reduce it, and the
+freshness assertion tolerates a six-hour lag for the same reason. A pipeline that must not
+miss an hour needs a scheduler with a delivery guarantee, which GitHub Actions is not.
 
 **Anything that reads the whole feature group should run on a runner, not locally.**
 Sustained transfers from a development machine drop mid-stream; this was verified as a

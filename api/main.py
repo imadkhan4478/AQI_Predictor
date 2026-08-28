@@ -17,7 +17,7 @@ from serving.forecast import (
     HORIZONS_HOURS,
     ForecastUnavailable,
     build_forecast,
-    load_feature_row,
+    load_observation,
     load_forecast_models,
     model_details,
 )
@@ -74,11 +74,20 @@ class Alert(BaseModel):
     message: str
 
 
+class Observation(BaseModel):
+    timestamp: str
+    aqi: int
+
+
 class ForecastResponse(BaseModel):
     city: str = Field(..., examples=["Lahore"])
     observed_at: str = Field(..., description="Timestamp of the latest feature row, UTC")
     current: AqiReading
     forecast: list[ForecastPoint]
+    history: list[Observation] = Field(
+        default_factory=list,
+        description="Observed AQI over the preceding 72 hours, oldest first",
+    )
     unavailable_horizons: list[int] = Field(
         default_factory=list,
         description="Horizons withheld because no blend weight is registered for them",
@@ -118,6 +127,7 @@ class _Cache:
         self.lock = threading.Lock()
         self.models = None
         self.feature_row = None
+        self.history = []
         self.feature_row_read_at = None
 
     def get_models(self):
@@ -133,9 +143,9 @@ class _Cache:
                 and time.monotonic() - self.feature_row_read_at < FEATURE_CACHE_SECONDS
             )
             if not fresh:
-                self.feature_row = load_feature_row(city_name)
+                self.feature_row, self.history = load_observation(city_name)
                 self.feature_row_read_at = time.monotonic()
-            return self.feature_row
+            return self.feature_row, self.history
 
     def feature_row_age(self):
         if self.feature_row_read_at is None:
@@ -157,7 +167,8 @@ def _payload():
     """Shared by /forecast and /current so both report identical numbers."""
     city = _city_name()
     try:
-        return build_forecast(city, CACHE.get_models(), CACHE.get_feature_row(city))
+        feature_row, history = CACHE.get_feature_row(city)
+        return build_forecast(city, CACHE.get_models(), feature_row, history=history)
     except ForecastUnavailable as error:
         # 503, not 500: the service is fine, the data isn't there yet, and a
         # retry is the correct client behaviour.

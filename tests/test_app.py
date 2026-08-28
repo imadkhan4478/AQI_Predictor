@@ -249,3 +249,67 @@ class TestRegistryKeyMangling:
               "metrics": {"R2": 0.5, "persistence__r2": 0.7}}]
         )[0]
         assert lost["Beats baseline on"] == "nothing"
+
+
+class TestForecastDates:
+    """"+24h" is a horizon, not a time. A reader planning tomorrow needs the date."""
+
+    def payload(self):
+        return {
+            "observed_at": "2026-08-27T08:00:00+00:00",
+            "current": {"aqi": 148, "category": "Unhealthy for Sensitive Groups",
+                        "color": "#ff7e00", "severity": "warning"},
+            "forecast": [
+                {"horizon_hours": 24, "aqi": 143, "category": "Unhealthy for Sensitive Groups",
+                 "color": "#ff7e00", "severity": "warning"},
+                {"horizon_hours": 72, "aqi": 141, "category": "Unhealthy for Sensitive Groups",
+                 "color": "#ff7e00", "severity": "warning"},
+            ],
+        }
+
+    def test_each_horizon_becomes_a_wall_clock_time(self):
+        points = dash.forecast_points(self.payload())
+        assert points[0]["at"].isoformat() == "2026-08-28T08:00:00+00:00"
+        assert points[1]["at"].isoformat() == "2026-08-30T08:00:00+00:00"
+
+    def test_the_anchor_is_the_observation_not_now(self):
+        """Anchoring to the current clock would date a forecast made from an
+        11-hour-old reading as though it started now."""
+        points = dash.forecast_points(self.payload())
+        assert points[0]["at"] - datetime.fromisoformat("2026-08-27T08:00:00+00:00") == timedelta(
+            hours=24
+        )
+
+
+class TestExplainabilityPanel:
+    RANKING = {
+        "horizon_hours": 24,
+        "explained_rows": 2000,
+        "features": [
+            {"column": "aqi", "label": "Current AQI", "mean_abs_shap": 12.5},
+            {"column": "aqi_rmean_72", "label": "AQI 72h average", "mean_abs_shap": 4.1},
+            {"column": "o3", "label": "Ozone (O3)", "mean_abs_shap": 2.2},
+        ],
+    }
+
+    def test_the_chart_uses_labels_not_column_names(self):
+        figure = dash.plot_shap(self.RANKING)
+        labels = list(figure.data[0].y)
+        assert "Current AQI" in labels
+        assert "aqi_rmean_72" not in labels
+
+    def test_the_largest_contributor_sits_at_the_top(self):
+        """Plotly draws a horizontal bar chart bottom-up, so the ranking is reversed
+        on the way in and the biggest bar must end up last."""
+        figure = dash.plot_shap(self.RANKING)
+        assert figure.data[0].y[-1] == "Current AQI"
+
+    def test_the_column_name_is_still_available_on_hover(self):
+        """A reader gets the readable label; a developer still needs the real column."""
+        figure = dash.plot_shap(self.RANKING)
+        assert "aqi_rmean_72" in list(figure.data[0].customdata)
+
+    def test_a_missing_ranking_file_is_not_an_error(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dash, "SHAP_RANKING_PATH", str(tmp_path / "absent.json"))
+        dash.shap_ranking.clear()
+        assert dash.shap_ranking() is None

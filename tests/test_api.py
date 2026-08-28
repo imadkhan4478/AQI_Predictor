@@ -51,7 +51,8 @@ def client(monkeypatch):
     )
     monkeypatch.setattr(CACHE, "feature_row", pd.Series(values))
     monkeypatch.setattr(CACHE, "feature_row_read_at", 0.0)
-    monkeypatch.setattr(CACHE, "get_feature_row", lambda city: CACHE.feature_row)
+    # The cache now returns (row, history) so both front ends render one payload.
+    monkeypatch.setattr(CACHE, "get_feature_row", lambda city: (CACHE.feature_row, []))
 
     return TestClient(app)
 
@@ -131,3 +132,15 @@ def test_unreachable_registry_is_503(client, monkeypatch):
         CACHE, "get_models", lambda: (_ for _ in ()).throw(ConnectionError("hopsworks down"))
     )
     assert client.get("/models").status_code == 503
+
+
+def test_forecast_serves_the_history_the_dashboard_plots(client, monkeypatch):
+    """One payload shape for both front ends: if the dashboard plots observations
+    behind the forecast, an API consumer can draw the same chart."""
+    monkeypatch.setattr(
+        CACHE,
+        "get_feature_row",
+        lambda city: (CACHE.feature_row, [{"timestamp": "2026-08-27T06:00:00+00:00", "aqi": 151}]),
+    )
+    body = client.get("/forecast").json()
+    assert body["history"] == [{"timestamp": "2026-08-27T06:00:00+00:00", "aqi": 151}]

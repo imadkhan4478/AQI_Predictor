@@ -265,3 +265,43 @@ def test_failed_bounded_read_is_not_escalated_to_a_full_read(monkeypatch):
     monkeypatch.setattr(fc, "read_features_df", _must_not_be_called)
     with pytest.raises(fc.ForecastUnavailable, match="ConnectionError"):
         fc.load_feature_history("Lahore")
+
+
+class TestObservedHistory:
+    """Three future numbers cannot show whether a forecast continues the recent
+    trend or breaks from it; the observations behind them can."""
+
+    def frame(self, hours, end="2026-08-27 12:00"):
+        index = pd.date_range(end=pd.Timestamp(end, tz="UTC"), periods=hours, freq="h")
+        return pd.DataFrame({"timestamp": index, "aqi": np.linspace(100, 150, hours)})
+
+    def test_it_returns_records_oldest_first(self):
+        history = fc.observed_history(self.frame(5))
+        assert len(history) == 5
+        assert history[0]["timestamp"] < history[-1]["timestamp"]
+        assert history[-1]["aqi"] == 150
+
+    def test_it_is_bounded_to_the_history_window(self):
+        history = fc.observed_history(self.frame(200))
+        assert len(history) == fc.HISTORY_HOURS + 1  # inclusive of the cutoff hour
+
+    def test_an_empty_frame_gives_an_empty_history(self):
+        assert fc.observed_history(pd.DataFrame({"timestamp": [], "aqi": []})) == []
+
+    def test_missing_readings_are_skipped_not_rendered_as_nan(self):
+        frame = self.frame(5)
+        frame.loc[2, "aqi"] = np.nan
+        assert len(fc.observed_history(frame)) == 4
+
+    def test_the_payload_carries_the_history(self):
+        payload = fc.build_forecast(
+            "Lahore",
+            {24: model_info(-20, 0.5)},
+            feature_row(),
+            history=[{"timestamp": "2026-08-24T06:00:00+00:00", "aqi": 170}],
+        )
+        assert payload["history"] == [{"timestamp": "2026-08-24T06:00:00+00:00", "aqi": 170}]
+
+    def test_history_defaults_to_empty_so_the_api_contract_is_stable(self):
+        payload = fc.build_forecast("Lahore", {24: model_info(-20, 0.5)}, feature_row())
+        assert payload["history"] == []

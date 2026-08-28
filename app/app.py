@@ -546,10 +546,12 @@ def render_forecast_cards(payload):
 
 def main():
     city_name = os.environ["CITY_NAME"]
-    st.set_page_config(page_title=f"AQI Predictor — {city_name}", page_icon="🌫️", layout="wide")
+    st.set_page_config(
+        page_title=f"10Pearls AQI Predictor — {city_name}", page_icon="🌫️", layout="wide"
+    )
     st.markdown(CARD_CSS, unsafe_allow_html=True)
 
-    st.title(f"🌫️ AQI Predictor — {city_name}")
+    st.title(f"🌫️ 10Pearls AQI Predictor — {city_name}")
     st.caption(
         "3-day Air Quality Index forecast · gradient boosting blended with a persistence "
         "baseline, retrained daily · feature pipeline scheduled hourly"

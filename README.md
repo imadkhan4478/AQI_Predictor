@@ -1,9 +1,13 @@
-# AQI Predictor
+# 10Pearls AQI Predictor
+
+**10Pearls Data Science Internship Programme — Imad Khan, BS Data Science, GIKI**
 
 Forecasts the US EPA Air Quality Index for Lahore, Pakistan at **24, 48 and 72 hours
 ahead**. Data collection, retraining and serving all run without an administered server:
 scheduled GitHub Actions jobs write to a hosted feature store, and a shared serving module
 feeds both a JSON API and a Streamlit dashboard.
+
+**[▸ Open the live dashboard](https://aqipredictor-ywkyutcdt9avvqymaaln69.streamlit.app/)**
 
 [![Tests](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/tests.yml/badge.svg)](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/tests.yml)
 [![Feature Pipeline](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/feature_pipeline.yml/badge.svg)](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/feature_pipeline.yml)
@@ -15,7 +19,6 @@ feeds both a JSON API and a Streamlit dashboard.
 | **Experiment log** | [`docs/EXPERIMENT_LOG.md`](docs/EXPERIMENT_LOG.md) — dated chronological record, every measurement |
 | **Exploratory analysis** | [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) — executed, renders on GitHub |
 | **Conventions** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — read before changing anything |
-| **Live dashboard** | <https://aqipredictor-ywkyutcdt9avvqymaaln69.streamlit.app/> |
 | **Report source** | [`docs/report/`](docs/report/) — `python build.py` regenerates the PDF, two passes so the contents page carries real page numbers |
 
 ## Headline result
@@ -32,88 +35,55 @@ horizons; on MAE it is level at 24–48h and ahead only at 72h, because the gain
 errors rather than typical ones. Full numbers, all six candidate models and the reasoning
 are in the report, §6.
 
-## Quickstart
+## How to judge this project in five minutes
 
-```bash
-git clone https://github.com/imadkhan4478/AQI_Predictor.git
-cd AQI_Predictor
+1. **The live dashboard** shows the forecast, the age of the reading it was made from, and a *Model and evaluation* panel putting the blend beside the persistence baseline it has to beat.
+2. **[The report](docs/AQI_Predictor_Technical_Report.pdf), §6** has the method: walk-forward evaluation, a purged chronological split, six candidate models.
+3. **[The report](docs/AQI_Predictor_Technical_Report.pdf), §8** has the eight times something reported success while doing nothing, and what was built so it cannot happen quietly again.
+4. **`pytest -q`** on a fresh clone runs 157 tests with no credentials and no accounts.
 
-python -m venv .venv
-.venv\Scripts\activate            # Windows;  source .venv/bin/activate elsewhere
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+## Architecture
 
-pytest -q                          # 72 tests, no credentials needed
+```
+OpenWeather (weather + pollutants + pollution archive)
+Open-Meteo archive (historical weather)      ← OpenWeather's weather history is paid
+        │
+        ▼
+feature_pipeline/   ──hourly, GitHub Actions──►   Hopsworks Feature Store
+                                                          │
+                        training_pipeline/  ──daily──►  Hopsworks Model Registry
+                                                          │
+                                              serving/forecast.py
+                                                │                │
+                                          api/main.py      app/app.py
 ```
 
-The test suite substitutes the feature store and the model registry, so it runs on a fresh
-clone with no configuration. Everything else needs credentials — see below.
+Both front ends call one serving module rather than each assembling features and applying
+the model themselves. This is the repository's most important structural rule: the dashboard
+once kept its own copy of that logic, drifted out of step with the training pipeline, and
+served a stale model while appearing healthy.
 
-```bash
-cp .env.example .env               # then fill in the six values
+## Data
 
-uvicorn api.main:app --reload      # API on :8000, docs at /docs
-streamlit run app/app.py           # dashboard on :8501
-```
-
-To point the dashboard at the running API instead of loading models into its own process:
-
-```bash
-AQI_API_URL=http://127.0.0.1:8000 streamlit run app/app.py
-```
-
-### Optional: the TensorFlow model
-
-The neural-net entry in the model comparison needs TensorFlow, which is deliberately **not**
-in `requirements.txt`:
-
-```bash
-pip install -r requirements-deep.txt
-```
-
-`hopsworks` declares `protobuf<5` while `tensorflow` requires `protobuf>=6.31`, so pip
-cannot resolve both in one pass. Installing second works and prints an "incompatible"
-warning about hopsworks, which is expected. Nothing deployed needs it — the pipelines, API,
-dashboard and tests all run on `requirements.txt` alone.
-
-## Configuration
-
-Six variables, documented in `.env.example`. The same six are held as GitHub Actions
-secrets; no secret has ever been committed, verified by a full history scan.
-
-| Variable | Purpose |
+| | |
 |---|---|
-| `OPENWEATHER_API_KEY` | Current weather, current pollution, and the free pollution archive |
-| `HOPSWORKS_API_KEY` | Feature store and model registry |
-| `HOPSWORKS_PROJECT_NAME` | Hopsworks project to connect to |
-| `CITY_NAME` | Label stored with every row, and the dashboard title |
-| `CITY_LAT` / `CITY_LON` | Coordinates passed to both APIs |
+| Rows | **49,153** hourly observations |
+| Span | 2020-11-27 00:00 → 2026-08-15 02:00 UTC |
+| Missing hours | 938 — **1.9%** |
+| Duplicates / nulls | 0 / 0 |
+| Stored columns → model features | 23 → 33 |
+| Mean / median AQI | 243 / 189 |
+| Dominant pollutant | PM2.5 in **89.2%** of hours, ozone 10.4% |
 
-Two optional variables, both no-ops when unset:
+Features: raw weather and pollutant readings, the computed AQI and its change rate,
+cyclically encoded hour, day-of-week, AQI lags at 1/2/3/6/12/24h, and rolling mean and
+standard deviation over 3/24/72h. `day` and `month` are computed and stored but excluded
+from training, because including them measurably hurts — report §4.2.
 
-| Variable | Effect when set |
-|---|---|
-| `AQI_API_URL` | The dashboard reads the JSON API instead of loading models itself |
-| `SENTRY_DSN` | Exceptions are reported, including the ones the dashboard handles quietly |
-
-## Deploying the API
-
-The dashboard runs on Streamlit Community Cloud from `app/app.py` and needs no
-deployment configuration. The API ships a `Procfile`, so any buildpack host runs it:
-
-```
-web: uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}
-```
-
-Set the same six secrets in the host's config, plus `SENTRY_DSN` if you want error
-reports. Python version comes from `.python-version`.
-
-**Deploy the API for callers, not for the dashboard.** `AQI_API_URL` is deliberately
-left unset in the deployed dashboard: pointing it at a hosted API would make the page
-depend on a service that can sleep, and a free-tier cold start exceeding the read
-timeout turns a working dashboard into a spinner. The dashboard imports
-`serving/forecast.py` in-process; the API is a second consumer of the same module,
-not a layer beneath it.
+The AQI is computed from raw concentrations using EPA breakpoints, applied to hourly
+readings rather than their official averaging windows. That approximation is documented in
+the `feature_pipeline/aqi.py` module docstring and in report §2.2. It is a consistent hourly
+proxy suitable as a forecasting target, not a figure to publish as official EPA AQI.
 
 ## How it runs
 
@@ -197,27 +167,6 @@ Two contract details worth knowing:
 itself generate load. Missing data returns **503**, not 500 — the service is fine, the data
 is not there yet, and the client should retry.
 
-## Architecture
-
-```
-OpenWeather (weather + pollutants + pollution archive)
-Open-Meteo archive (historical weather)      ← OpenWeather's weather history is paid
-        │
-        ▼
-feature_pipeline/   ──hourly, GitHub Actions──►   Hopsworks Feature Store
-                                                          │
-                        training_pipeline/  ──daily──►  Hopsworks Model Registry
-                                                          │
-                                              serving/forecast.py
-                                                │                │
-                                          api/main.py      app/app.py
-```
-
-Both front ends call one serving module rather than each assembling features and applying
-the model themselves. This is the repository's most important structural rule: the dashboard
-once kept its own copy of that logic, drifted out of step with the training pipeline, and
-served a stale model while appearing healthy.
-
 ## Repository layout
 
 ```
@@ -243,27 +192,88 @@ scripts/                offline smoke test of the slow paths
 docs/                   report, experiment log, conventions
 ```
 
-## Data
+## Quickstart
 
-| | |
+```bash
+git clone https://github.com/imadkhan4478/AQI_Predictor.git
+cd AQI_Predictor
+
+python -m venv .venv
+.venv\Scripts\activate            # Windows;  source .venv/bin/activate elsewhere
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+pytest -q                          # 72 tests, no credentials needed
+```
+
+The test suite substitutes the feature store and the model registry, so it runs on a fresh
+clone with no configuration. Everything else needs credentials — see below.
+
+```bash
+cp .env.example .env               # then fill in the six values
+
+uvicorn api.main:app --reload      # API on :8000, docs at /docs
+streamlit run app/app.py           # dashboard on :8501
+```
+
+To point the dashboard at the running API instead of loading models into its own process:
+
+```bash
+AQI_API_URL=http://127.0.0.1:8000 streamlit run app/app.py
+```
+
+### Optional: the TensorFlow model
+
+The neural-net entry in the model comparison needs TensorFlow, which is deliberately **not**
+in `requirements.txt`:
+
+```bash
+pip install -r requirements-deep.txt
+```
+
+`hopsworks` declares `protobuf<5` while `tensorflow` requires `protobuf>=6.31`, so pip
+cannot resolve both in one pass. Installing second works and prints an "incompatible"
+warning about hopsworks, which is expected. Nothing deployed needs it — the pipelines, API,
+dashboard and tests all run on `requirements.txt` alone.
+
+## Configuration
+
+Six variables, documented in `.env.example`. The same six are held as GitHub Actions
+secrets; no secret has ever been committed, verified by a full history scan.
+
+| Variable | Purpose |
 |---|---|
-| Rows | **49,153** hourly observations |
-| Span | 2020-11-27 00:00 → 2026-08-15 02:00 UTC |
-| Missing hours | 938 — **1.9%** |
-| Duplicates / nulls | 0 / 0 |
-| Stored columns → model features | 23 → 33 |
-| Mean / median AQI | 243 / 189 |
-| Dominant pollutant | PM2.5 in **89.2%** of hours, ozone 10.4% |
+| `OPENWEATHER_API_KEY` | Current weather, current pollution, and the free pollution archive |
+| `HOPSWORKS_API_KEY` | Feature store and model registry |
+| `HOPSWORKS_PROJECT_NAME` | Hopsworks project to connect to |
+| `CITY_NAME` | Label stored with every row, and the dashboard title |
+| `CITY_LAT` / `CITY_LON` | Coordinates passed to both APIs |
 
-Features: raw weather and pollutant readings, the computed AQI and its change rate,
-cyclically encoded hour, day-of-week, AQI lags at 1/2/3/6/12/24h, and rolling mean and
-standard deviation over 3/24/72h. `day` and `month` are computed and stored but excluded
-from training, because including them measurably hurts — report §4.2.
+Two optional variables, both no-ops when unset:
 
-The AQI is computed from raw concentrations using EPA breakpoints, applied to hourly
-readings rather than their official averaging windows. That approximation is documented in
-the `feature_pipeline/aqi.py` module docstring and in report §2.2. It is a consistent hourly
-proxy suitable as a forecasting target, not a figure to publish as official EPA AQI.
+| Variable | Effect when set |
+|---|---|
+| `AQI_API_URL` | The dashboard reads the JSON API instead of loading models itself |
+| `SENTRY_DSN` | Exceptions are reported, including the ones the dashboard handles quietly |
+
+## Deploying the API
+
+The dashboard runs on Streamlit Community Cloud from `app/app.py` and needs no
+deployment configuration. The API ships a `Procfile`, so any buildpack host runs it:
+
+```
+web: uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}
+```
+
+Set the same six secrets in the host's config, plus `SENTRY_DSN` if you want error
+reports. Python version comes from `.python-version`.
+
+**Deploy the API for callers, not for the dashboard.** `AQI_API_URL` is deliberately
+left unset in the deployed dashboard: pointing it at a hosted API would make the page
+depend on a service that can sleep, and a free-tier cold start exceeding the read
+timeout turns a working dashboard into a spinner. The dashboard imports
+`serving/forecast.py` in-process; the API is a second consumer of the same module,
+not a layer beneath it.
 
 ## Troubleshooting
 

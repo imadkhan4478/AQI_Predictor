@@ -336,3 +336,35 @@ class TestReadingCards:
 
     def test_a_version_without_metrics_says_so(self):
         assert "not recorded" in dash.typical_error_text({})
+
+
+class TestEmptyBaselineColumns:
+    """persistence_RMSE is only stored on versions registered after it was added,
+    so that column is uniformly blank until the next retrain. An empty column reads
+    as unfinished work."""
+
+    def rows(self, rmse_baseline="—"):
+        return [
+            {"Horizon": "24h", "R2": "0.832", "R2 baseline": "0.814",
+             "RMSE": "48.4", "RMSE baseline": rmse_baseline},
+            {"Horizon": "48h", "R2": "0.748", "R2 baseline": "0.709",
+             "RMSE": "59.0", "RMSE baseline": "—"},
+        ]
+
+    def test_a_uniformly_empty_baseline_column_is_dropped_and_named(self):
+        trimmed, missing = dash.drop_empty_baselines(self.rows())
+        assert "RMSE baseline" not in trimmed[0]
+        assert missing == ["RMSE"]
+        # The model's own RMSE stays: only the absent comparison goes.
+        assert trimmed[0]["RMSE"] == "48.4"
+
+    def test_a_partially_populated_column_is_kept(self):
+        """One version carrying the figure is reason to show the column, not hide it."""
+        trimmed, missing = dash.drop_empty_baselines(self.rows(rmse_baseline="52.1"))
+        assert "RMSE baseline" in trimmed[0]
+        assert missing == []
+
+    def test_populated_columns_are_never_dropped(self):
+        trimmed, missing = dash.drop_empty_baselines(self.rows())
+        assert trimmed[0]["R2 baseline"] == "0.814"
+        assert "R2" not in missing

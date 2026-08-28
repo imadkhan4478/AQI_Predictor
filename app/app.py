@@ -102,11 +102,19 @@ CARD_CSS = """
 .reading .foot { font-size: 0.72rem; color: #667085; margin-top: 0.4rem; }
 
 /* The legend is a key, not a control: quiet, aligned, out of the main column. */
-.legend-chip {
-    display: inline-flex; align-items: center;
-    padding: 0.12rem 0.5rem; border-radius: 4px;
-    font-size: 0.70rem; margin: 0.1rem 0.1rem 0.1rem 0; font-weight: 600;
+.legend-row {
+    display: flex; align-items: center; gap: 0.45rem;
+    font-size: 0.74rem; line-height: 1.5; color: #344054;
 }
+.legend-swatch {
+    width: 10px; height: 10px; border-radius: 2px; flex: 0 0 10px;
+    border: 1px solid rgba(0,0,0,0.15);
+}
+.legend-range {
+    font-variant-numeric: tabular-nums; color: #667085;
+    min-width: 3.4rem; font-size: 0.7rem;
+}
+.legend-name { font-weight: 600; }
 .sidebar-label {
     font-size: 0.68rem; letter-spacing: 0.07em; text-transform: uppercase;
     color: #667085; font-weight: 700; margin: 0.9rem 0 0.2rem;
@@ -398,6 +406,29 @@ def evaluation_rows(details):
     return rows
 
 
+BASELINE_COLUMNS = {
+    "R2 baseline": "R2",
+    "MAE baseline": "MAE",
+    "RMSE baseline": "RMSE",
+}
+
+
+def drop_empty_baselines(rows):
+    """(rows, names of baselines dropped) with all-empty baseline columns removed.
+
+    `persistence_RMSE` is only stored on versions registered after it was added, so
+    that column is uniformly blank until the next retrain. An empty column reads as
+    unfinished work; naming the omission in the caption reads as a known state.
+    """
+    missing = [
+        column
+        for column in BASELINE_COLUMNS
+        if all(row.get(column) == "—" for row in rows)
+    ]
+    trimmed = [{k: v for k, v in row.items() if k not in missing} for row in rows]
+    return trimmed, [BASELINE_COLUMNS[column] for column in missing]
+
+
 def render_evaluation(details):
     """The held-out comparison, on the page rather than only in the report.
 
@@ -406,7 +437,15 @@ def render_evaluation(details):
     the baseline sits in the same table as the model at the same size.
     """
     st.subheader("Model and evaluation")
-    st.dataframe(evaluation_rows(details), hide_index=True, use_container_width=True)
+    rows, missing = drop_empty_baselines(evaluation_rows(details))
+    st.dataframe(rows, hide_index=True, use_container_width=True)
+    if missing:
+        st.caption(
+            "No baseline is recorded for "
+            + ", ".join(missing)
+            + " on these model versions — that figure is stored from the next retrain "
+            "onward, so the column is omitted rather than shown empty."
+        )
     st.caption(
         "Walk-forward evaluation: retrain at successive monthly origins and score only "
         "the following month, never a single frozen split. **Baseline** is persistence — "
@@ -438,12 +477,21 @@ def render_hero(reading, when="Observed", foot=""):
 
 
 def render_legend():
-    chips = "".join(
-        f'<span class="legend-chip" style="background:{color};'
-        f'color:{readable_text_color(color)};">{name}</span>'
-        for _, _, name, _, color in _CATEGORIES
+    """The EPA scale as one row per category.
+
+    Laid out vertically because the category names are long: as inline chips,
+    "Unhealthy for Sensitive Groups" and "Unhealthy" wrap into each other and the
+    key becomes harder to read than the thing it explains.
+    """
+    rows = "".join(
+        f'<div class="legend-row">'
+        f'<span class="legend-swatch" style="background:{color};"></span>'
+        f'<span class="legend-range">{lower}&ndash;{upper}</span>'
+        f'<span class="legend-name">{name}</span>'
+        f"</div>"
+        for lower, upper, name, _, color in _CATEGORIES
     )
-    st.markdown(chips, unsafe_allow_html=True)
+    st.markdown(rows, unsafe_allow_html=True)
 
 
 def forecast_points(payload):

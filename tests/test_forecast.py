@@ -121,10 +121,13 @@ def test_alert_fires_for_the_worst_point_in_the_window():
     assert "Hazardous" in payload["alert"]["message"]
 
 
-def test_alert_can_be_about_right_now():
+def test_an_alert_about_the_present_is_tied_to_the_reading_not_the_clock():
+    """The payload is built from the newest *complete* observation, which on a
+    lagging pipeline can be a day old. "expected now" was false for 26 hours."""
     payload = fc.build_forecast("Lahore", {24: model_info(-120, 1.0)}, feature_row(aqi=260))
     assert payload["alert"]["horizon_hours"] == 0
-    assert "now" in payload["alert"]["message"]
+    assert "at the latest reading" in payload["alert"]["message"]
+    assert "now" not in payload["alert"]["message"]
 
 
 def test_no_alert_when_air_is_acceptable():

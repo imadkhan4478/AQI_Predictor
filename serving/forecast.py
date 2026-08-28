@@ -232,7 +232,14 @@ def _build_alert(current, horizons):
     if not worst["severity"]:
         return None
 
-    when = "now" if worst["horizon_hours"] == 0 else f"in {worst['horizon_hours']}h"
+    # "now" is a claim about the clock, and this payload is built from the newest
+    # *complete* observation, which on a lagging pipeline can be a day old. The
+    # wording is tied to that reading instead, so it stays true at any data age.
+    when = (
+        "at the latest reading"
+        if worst["horizon_hours"] == 0
+        else f"{worst['horizon_hours']}h after the latest reading"
+    )
     return {
         "severity": worst["severity"],
         "horizon_hours": worst["horizon_hours"],

@@ -32,6 +32,7 @@ from serving.forecast import (
     load_observation,
     model_details,
 )
+from training_pipeline.feature_names import display_name
 
 load_dotenv()
 
@@ -683,7 +684,9 @@ def render_sidebar(payload, details):
             st.markdown(
                 '<div class="sidebar-label">Dominant pollutant</div>', unsafe_allow_html=True
             )
-            st.write(f"**{dominant}**")
+            # display_name, not the raw column: `pm2_5` on the page is the same
+            # defect as `aqi_rmean_72` on a chart axis.
+            st.write(f"**{display_name(dominant)}**")
 
         st.markdown('<div class="sidebar-label">EPA AQI scale</div>', unsafe_allow_html=True)
         render_legend()

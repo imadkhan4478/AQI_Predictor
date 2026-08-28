@@ -395,3 +395,11 @@ class TestFreshnessThresholds:
         from feature_pipeline.pipeline import STALE_AFTER_HOURS as pipeline_tolerance
 
         assert dash.STALE_AFTER_HOURS == pipeline_tolerance
+
+
+def test_the_dominant_pollutant_is_named_not_column_cased():
+    """`pm2_5` in the sidebar is the same defect as `aqi_rmean_72` on a chart axis."""
+    from training_pipeline.feature_names import display_name
+
+    assert display_name("pm2_5") == "PM2.5"
+    assert display_name("o3") == "Ozone (O3)"

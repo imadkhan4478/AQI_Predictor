@@ -1,0 +1,1006 @@
+<html lang="en">
+<meta charset="utf-8">
+<title>AQI Predictor — Technical Report</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm 18mm 18mm; }
+
+  :root {
+    --ink: #14161a;
+    --body: #2c3037;
+    --muted: #6b7078;
+    --rule: #d8d6cf;
+    --blue: #2a78d6;
+    --orange: #eb6834;
+    --wash: #f6f7f9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: "DejaVu Serif", Georgia, serif;
+    font-size: 10.2pt;
+    line-height: 1.52;
+    color: var(--body);
+    margin: 0;
+    text-align: justify;
+    hyphens: auto;
+  }
+
+  h1, h2, h3, h4, .sans { font-family: "DejaVu Sans", Helvetica, Arial, sans-serif; }
+
+  h1 { text-align: left; }
+  h2 {
+    font-size: 13pt; color: var(--ink); margin: 26pt 0 9pt 0;
+    padding-bottom: 4pt; border-bottom: 1.5px solid var(--ink);
+    break-after: avoid; text-align: left;
+  }
+  h3 {
+    font-size: 10.8pt; color: var(--ink); margin: 16pt 0 5pt 0;
+    break-after: avoid; text-align: left;
+  }
+  h4 {
+    font-size: 9.8pt; color: var(--muted); margin: 11pt 0 3pt 0;
+    text-transform: uppercase; letter-spacing: 0.6pt; break-after: avoid;
+  }
+  p { margin: 0 0 7pt 0; }
+  ul, ol { margin: 0 0 7pt 0; padding-left: 16pt; }
+  li { margin-bottom: 3pt; }
+  strong { color: var(--ink); }
+  code, .mono {
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 0.88em; color: var(--ink);
+    background: none; padding: 0;
+  }
+  a { color: var(--blue); text-decoration: none; }
+
+  /* ---- cover ---- */
+  .title-page {
+    break-after: page; height: 246mm;
+    display: flex; flex-direction: column; justify-content: space-between;
+    text-align: center; hyphens: none;
+  }
+  .cover-inst {
+    font-size: 15pt; color: var(--ink); margin: 8mm auto 0 auto;
+    letter-spacing: 0.3pt;
+  }
+  .cover-prog { font-size: 10pt; color: var(--muted); margin-top: 5pt;
+    letter-spacing: 0.4pt; }
+
+  .cover-rule {
+    border-top: 0.8px solid var(--ink); width: 84mm; margin: 0 auto;
+  }
+  .cover-title {
+    font-family: "DejaVu Serif", Georgia, serif;
+    font-size: 30pt; font-weight: bold; color: var(--ink);
+    margin: 13pt 0 9pt 0; line-height: 1.1; text-align: center;
+    letter-spacing: 0.2pt;
+  }
+  .cover-sub {
+    font-size: 13pt; color: var(--body); line-height: 1.45;
+    margin: 0 auto 13pt auto; max-width: 118mm;
+  }
+  .cover-kind {
+    font-size: 10pt; color: var(--muted); margin-top: 11pt;
+    letter-spacing: 1.4pt; text-transform: uppercase;
+  }
+
+  .cover-by { font-size: 9.6pt; color: var(--muted); margin-bottom: 5pt; }
+  .cover-author { font-size: 13pt; color: var(--ink); margin-bottom: 5pt; }
+  .cover-aff { font-size: 10pt; color: var(--body); line-height: 1.5; }
+  .cover-date { font-size: 10pt; color: var(--ink); margin-top: 13mm; margin-bottom: 6mm; }
+
+  .frontmatter { break-after: page; }
+  .toc { font-family: "DejaVu Sans", Helvetica, sans-serif; font-size: 9.2pt; }
+  .toc div { display: flex; align-items: baseline; margin-bottom: 3.4pt; }
+  .toc .n { width: 12mm; color: var(--muted); flex: none; }
+  .toc .t { color: var(--ink); }
+  .toc .dots { flex: 1; border-bottom: 0.5px dotted var(--rule); margin: 0 5pt 2pt 5pt; }
+  .toc .p { color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
+  .toc .sub { margin-bottom: 2.6pt; font-size: 8.8pt; }
+  .toc .sub .n { width: 18mm; padding-left: 7mm; box-sizing: border-box; }
+  .toc .sub .t { color: var(--body); }
+  .toc .grp { margin-top: 7pt; }
+
+  /* ---- tables ---- */
+  table {
+    width: 100%; border-collapse: collapse; margin: 9pt 0 12pt 0;
+    font-size: 8.8pt; font-family: "DejaVu Sans", Helvetica, sans-serif;
+    break-inside: avoid; text-align: left;
+  }
+  th {
+    text-align: left; font-weight: bold; color: var(--ink);
+    border-bottom: 1.2px solid var(--ink); padding: 4pt 8pt 3.5pt 0;
+    font-size: 8.4pt; line-height: 1.3;
+  }
+  th:last-child, td:last-child { padding-right: 0; }
+  td { padding: 3.6pt 8pt 3.6pt 0; border-bottom: 0.5px solid var(--rule);
+        vertical-align: top; line-height: 1.38; }
+  td.num, th.num { text-align: right; padding-right: 10pt; font-variant-numeric: tabular-nums; }
+  tr.best td { background: #f0f0ee; }
+  .win { color: var(--ink); font-weight: bold; }
+  .lose { color: var(--muted); }
+
+  /* ---- figures ---- */
+  figure { margin: 11pt 0 12pt 0; break-inside: avoid; }
+  figure img { width: 100%; display: block; border: 0.5px solid var(--rule); }
+  figcaption {
+    font-family: "DejaVu Sans", Helvetica, sans-serif;
+    font-size: 8.2pt; color: var(--muted); margin-top: 5pt; line-height: 1.45;
+    text-align: left;
+  }
+  figcaption b { color: var(--ink); }
+  figure.narrow img { width: 62%; margin: 0 auto; }
+
+  .callout {
+    border: 0.8px solid var(--rule); border-left: 2.5px solid var(--ink);
+    padding: 9pt 12pt; margin: 13pt 0; font-size: 9.4pt; break-inside: avoid;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout h4 { margin-top: 0; color: var(--ink); letter-spacing: 0.5pt; }
+
+  .eq {
+    font-family: "DejaVu Sans Mono", monospace; font-size: 9pt;
+    background: var(--wash); padding: 8pt 11pt; margin: 10pt 0; color: var(--ink);
+    text-align: left; line-height: 1.55; white-space: pre-wrap;
+  }
+  .eq-inline {
+    display: block; font-family: "DejaVu Sans Mono", monospace; font-size: 8.6pt;
+    color: var(--ink); background: var(--wash); padding: 5pt 9pt; margin: 5pt 0 2pt 0;
+    text-align: left;
+  }
+  sub, sup { font-size: 0.68em; line-height: 0; }
+  .footnote { font-size: 8.4pt; color: var(--muted); }
+  .tp-foot, .toc, figcaption, h4 { hyphens: none; }
+  .pagebreak { break-before: page; }
+</style>
+
+<div class="title-page">
+  <div class="cover-top">
+    <div class="cover-inst">10Pearls</div>
+    <div class="cover-prog">Data Science Internship Programme</div>
+  </div>
+
+  <div class="cover-mid">
+    <div class="cover-rule"></div>
+    <h1 class="cover-title">AQI&nbsp;Predictor</h1>
+    <div class="cover-sub">Forecasting the Air Quality Index for Lahore,<br>24 to 72 Hours Ahead</div>
+    <div class="cover-rule"></div>
+    <div class="cover-kind">Technical Report</div>
+  </div>
+
+  <div class="cover-bottom">
+    <div class="cover-by">Submitted by</div>
+    <div class="cover-author">Imad Khan</div>
+    <div class="cover-aff">Data Intern, 10Pearls<br>
+      BS Data Science, Ghulam Ishaq Khan Institute of<br>
+      Engineering Sciences and Technology</div>
+    <div class="cover-date">25 August 2026</div>
+  </div>
+</div>
+
+<div class="frontmatter">
+  <h2 style="margin-top:0">Abstract</h2>
+  <p>This report documents a serverless machine-learning system that forecasts the US EPA
+  Air Quality Index for Lahore at 24, 48 and 72 hours ahead. Hourly weather and pollutant
+  readings are collected by a scheduled job, the AQI is computed from raw concentrations
+  using EPA breakpoints, features are stored in a managed feature store, models are
+  retrained daily, and forecasts are served through both a JSON API and an interactive
+  dashboard. No component runs on administered infrastructure.</p>
+
+  <p>The dataset spans 5.7 years and 49,153 hourly observations. Six forecasting
+  approaches were evaluated &mdash; a persistence baseline, ARIMA, Ridge regression, Random
+  Forest, gradient boosting and a neural network &mdash; across three horizons and three
+  error metrics. <strong>No standalone model beat the naive persistence baseline in any of
+  the eighteen resulting comparisons.</strong> The deployed forecast is consequently an
+  anchored blend of a gradient-boosting model with persistence, which beats the baseline on
+  R<sup>2</sup> and RMSE at all three horizons (0.832, 0.748 and 0.715 against 0.814, 0.709 and
+  0.628).</p>
+
+  <p>Two findings are of more general interest than the accuracy. First, the choice of
+  evaluation protocol determined which model appeared best: under a single frozen
+  train/test split Ridge regression outranked the tree models, and under walk-forward
+  evaluation matching the daily-retraining deployment the ordering inverted completely.
+  The same model scored 0.738 frozen and 0.831 walk-forward. Second, ARIMA &mdash; which
+  uses no weather or pollutant features at all &mdash; outperformed every feature-based
+  model under the frozen split, indicating that 33 engineered features contribute nothing
+  beyond the series&rsquo; own autocorrelation unless the model is retrained frequently.</p>
+
+  <p>The report also records five modelling hypotheses that failed, two quantitative errors
+  found and corrected during preparation, and four production incidents in which a
+  pipeline reported success while doing no useful work.</p>
+
+</div>
+
+<div class="frontmatter">
+  <h2 style="margin-top:0">Contents</h2>
+  <div class="toc" id="toc"></div>
+
+  <h2>Figures</h2>
+  <div class="toc" id="lof"></div>
+</div>
+
+<h2>1. Problem, and what "solved" means here</h2>
+
+<p>Forecast the Air Quality Index for a city 24, 48 and 72 hours ahead, using only free
+tiers, with no server to administer. Lahore was chosen deliberately: its air quality is
+severe and highly variable, so the forecasting problem is real rather than a flat line
+to trace.</p>
+
+<p>The requirement that shaped everything is easy to overlook. A 3-day forecast is not
+one number — it is three, at three different horizons, and each behaves differently.
+Near-term AQI is strongly autocorrelated and therefore easy; 72-hour AQI is not. Any
+honest evaluation has to report all three separately, and a model that wins at one
+horizon need not win at another. It turned out that assuming otherwise was the single
+costliest mistake made during this project (§6.3).</p>
+
+<h3>1.1 What was built</h3>
+
+<table>
+  <tr><th style="width:26%">Component</th><th>Implementation</th></tr>
+  <tr><td>Feature pipeline</td><td>Hourly GitHub Actions job — fetch, compute EPA AQI, write one row to the feature store</td></tr>
+  <tr><td>Historical backfill</td><td>5.7 years loaded in monthly chunks, executed on a runner</td></tr>
+  <tr><td>Feature store</td><td>Hopsworks feature group, HUDI, composite key <code>(city_name, timestamp)</code></td></tr>
+  <tr><td>Training pipeline</td><td>Daily GitHub Actions job — walk-forward evaluation, blend-weight fitting, registration</td></tr>
+  <tr><td>Model registry</td><td>Hopsworks, one model per horizon, blend weight stored beside the artifact</td></tr>
+  <tr><td>Serving core</td><td>One module assembling features and applying the blend, shared by both front ends</td></tr>
+  <tr><td>API</td><td>FastAPI — <code>/health</code>, <code>/current</code>, <code>/forecast</code>, <code>/models</code>, OpenAPI docs</td></tr>
+  <tr><td>Dashboard</td><td>Streamlit + Plotly, EPA colour scale, hazard alerts</td></tr>
+  <tr><td>Explainability</td><td>SHAP, regenerated weekly from the deployed model</td></tr>
+  <tr><td>Tests</td><td>72, no credentials required, run on every push</td></tr>
+</table>
+
+<h2>2. Data</h2>
+
+<h3>2.1 Sources, and an asymmetry that shaped the design</h3>
+
+<p>Two providers, both free, and the split between them is not arbitrary. OpenWeather
+serves current weather, current air pollution, <em>and</em> historical air pollution at no
+cost — but its historical <em>weather</em> requires a paid plan. Historical weather therefore
+comes from Open-Meteo's archive API, which is free and needs no key. The backfill merges
+the two on the hour.</p>
+
+<p>That asymmetry is worth stating because it is the reason the project has 5.7 years of
+data instead of 90 days. The free pollution archive reaches back to 27 November 2020, and
+finding that out changed the project's trajectory more than any modelling decision
+(§4.1).</p>
+
+<h3>2.2 Computing the AQI</h3>
+
+<p>OpenWeather returns raw pollutant <em>concentrations</em>, not an index, so the US EPA AQI
+is computed from scratch. Three details matter and each was a source of error:</p>
+
+<ol>
+  <li><strong>Unit conversion.</strong> Gases are converted from µg/m<sup>3</sup> to ppb at
+  25&nbsp;°C and 1&nbsp;atm, with CO additionally converted to ppm:
+  <span class="eq-inline">ppb = µg/m<sup>3</sup> × 24.45 / molecular weight</span></li>
+  <li><strong>Truncation before matching.</strong> EPA breakpoint tables have gaps between
+  buckets — PM10 runs 0–54, then 55–154. An untruncated reading of 54.5 matches
+  <em>nothing</em> and yields no sub-index. Concentrations are truncated to the EPA's
+  specified precision first.</li>
+  <li><strong>Clamping at both ends.</strong> OpenWeather's pollution figures come from a
+  chemical transport model that occasionally emits small <em>negative</em> concentrations for
+  trace gases. EPA breakpoints start at zero, so a negative reading matched no range and
+  returned <code>None</code>, which then propagated into <code>max()</code>. Ninety days of
+  data contained no such value; 5.7 years hit one immediately.</li>
+</ol>
+
+<p>The overall AQI is the worst sub-index, and the pollutant producing it is recorded as
+<code>dominant_pollutant</code>. Tables use the 2024-revised PM2.5 breakpoints (Good ends at
+9.0, not the obsolete 12.0).</p>
+
+<div class="callout">
+  <h4>Known approximation — disclosed rather than hidden</h4>
+  <p>The EPA defines each breakpoint table over an averaging window: 24 hours for PM,
+  8 hours for O<sub>3</sub> and CO, 1 hour for SO<sub>2</sub> and NO<sub>2</sub>. This implementation applies those tables
+  to the single hourly reading OpenWeather publishes, because that is the only thing
+  available at hourly cadence from a free source.</p>
+  <p>The consequence is specific rather than vague. Because PM is officially averaged over
+  a day and over one hour here, short pollution spikes register at full strength instead of
+  being smoothed — so this value is <em>more volatile</em> than official EPA AQI, reading
+  higher during a spike and lower after it. It tracks official AQI closely on flat days and
+  diverges most on sharply changing ones. It is a consistent hourly proxy, correct as a
+  forecasting target, and <em>not</em> a figure to publish as the official EPA AQI for a given
+  hour. Fixing it means rolling concentrations to their proper windows before scoring;
+  that is deliberately not done, because every model result in this report was measured
+  against this definition and changing it silently would invalidate the comparisons.</p>
+</div>
+
+<h3>2.3 What the store actually holds</h3>
+
+<table>
+  <tr><th style="width:40%">Property</th><th>Value</th></tr>
+  <tr><td>Rows</td><td class="num" style="text-align:left"><strong>49,153</strong> hourly observations</td></tr>
+  <tr><td>Span</td><td>2020-11-27 00:00 → 2026-08-15 02:00 UTC (5.7 years)</td></tr>
+  <tr><td>Expected hours in span</td><td>50,091</td></tr>
+  <tr><td>Missing hours</td><td>938 — <strong>1.9%</strong></td></tr>
+  <tr><td>Duplicate timestamps</td><td>0</td></tr>
+  <tr><td>Nulls</td><td>0</td></tr>
+  <tr><td>Stored columns → model features</td><td>23 → 33</td></tr>
+  <tr><td>Mean / median / max AQI</td><td>243.3 / 189 / 500</td></tr>
+  <tr><td>Dominant pollutant</td><td>PM2.5 in <strong>89.2%</strong> of hours, ozone 10.4%, PM10 0.4%</td></tr>
+</table>
+
+<p>The missing 1.9% is not cosmetic — it dictates how labels are built (§5.1). And the
+composite primary key <code>(city_name, timestamp)</code> makes inserts idempotent: re-running
+a backfill upserts rather than duplicating, which is what made recovery from a failed bulk
+load trivial rather than a data-cleaning exercise.</p>
+
+<figure>
+  <img src="figures/fig01.png" alt="Hourly coverage by year">
+  <figcaption><b>Figure 1 — Hourly coverage by year.</b> Coverage is near-complete
+  throughout. The gaps are dispersed rather than clustered, which is why interpolation over
+  short windows is safe and why a positional label shift is not.</figcaption>
+</figure>
+
+<h2>3. Exploratory analysis</h2>
+
+<p>Each finding below is followed by the design decision it forced. That ordering is the
+point: none of these were selected for interest after the fact.</p>
+
+<h3>3.1 The series</h3>
+
+<figure>
+  <img src="figures/fig02.png" alt="Lahore AQI, full history">
+  <figcaption><b>Figure 2 — Hourly AQI, 2020–2026,</b> as a daily mean with a 30-day mean
+  over it. Two structures dominate and they pull in opposite directions for a model: a
+  strong annual cycle, and a downward drift across years. Sections 3.2 and 3.3 separate
+  them.</figcaption>
+</figure>
+
+<p>Mean AQI is 243 and the median 189 — on the EPA scale that is "Very Unhealthy" on
+average. The distribution is wide (std 141, min 15, max the 500 ceiling) and
+right-skewed: the mean sits well above the median because winter spikes drag it up.</p>
+
+<h3>3.2 The trend, and a number that was wrong</h3>
+
+<figure>
+  <img src="figures/fig03.png" alt="Mean AQI by year">
+  <figcaption><b>Figure 3 — Mean AQI by complete year.</b> Grey bars are partial years and
+  are excluded from the headline figure. Across complete years the decline is 270 → 198,
+  about <b>27%</b>, or roughly 7% a year.</figcaption>
+</figure>
+
+<div class="callout">
+  <h4>A correction, kept in the report on purpose</h4>
+  <p>For most of this project the decline was recorded as <strong>58%</strong> — 387 in 2020
+  against 162 in 2026 — and that figure propagated into the README, the experiment log, a
+  chart title and two module docstrings. It is wrong. The archive opens on 27 November
+  2020, <em>inside</em> peak smog season, and ends in August, the cleanest month of the year.
+  So the comparison put a winter-only stub against a summer-weighted one, with both biases
+  pointing the same way.</p>
+  <p>Across complete years (2021–2025) the decline is <strong>27%</strong>. The modelling
+  conclusions are unaffected — the regime shift is real, with a training-window mean of 262
+  against the test window's 169 — but the magnitude was overstated by more than double. The
+  notebook now computes the figure across complete years only and greys out partial years
+  with their coverage labelled on the bar, so it cannot be misread the same way again.</p>
+</div>
+
+<h3>3.3 Seasonality, separated from the trend</h3>
+
+<figure>
+  <img src="figures/fig04.png" alt="Mean AQI by year and month">
+  <figcaption><b>Figure 4 — Mean AQI by year and month.</b> Reading across shows the
+  seasonal cycle; reading down shows the trend. The improvement is concentrated in the
+  clean season — summer months pale sharply across 2025–2026 — while <b>January 2024 is the
+  darkest cell in the record</b>.</figcaption>
+</figure>
+
+<p>Monthly means range from 137 in July to 411 in December, with January at 392 and
+November at 343. This figure carries the most operationally important finding in the whole
+analysis: <strong>winter smog has barely improved.</strong> A headline "air quality is
+improving 7% a year" is true and, for a hazard-alerting system, close to irrelevant — the
+season when alerts matter is the season that has not improved.</p>
+
+<p><em>Decision this forced.</em> The test window must span whole seasons. An earlier
+evaluation used three weeks of stable summer and reported around MAE 19; a test window
+covering a winter reports around MAE 48 for the same class of model. The second number is
+not a regression, it is the honest one.</p>
+
+<h3>3.4 The daily cycle</h3>
+
+<figure>
+  <img src="figures/fig05.png" alt="Mean AQI by hour of day">
+  <figcaption><b>Figure 5 — Mean AQI by hour of day (UTC).</b> A clear diurnal cycle driven
+  by traffic and by the overnight collapse of the boundary layer.</figcaption>
+</figure>
+
+<p><em>Decision this forced.</em> <code>hour</code> is kept as a feature and encoded
+cyclically as <code>sin</code>/<code>cos</code>, so 23:00 and 00:00 are adjacent rather than at
+opposite ends of a 0–23 range. <code>day</code>-of-month and <code>month</code> are computed and
+stored in the feature group — the brief asks for them — but <strong>excluded from the
+model's feature set</strong>, because including them measurably hurts (§5.3).</p>
+
+<h3>3.5 Why the naive baseline is so hard to beat</h3>
+
+<figure>
+  <img src="figures/fig06.png" alt="AQI autocorrelation">
+  <figcaption><b>Figure 6 — Autocorrelation of hourly AQI</b> with the three forecast
+  horizons marked. <b>0.77 at 24h, 0.68 at 48h, 0.63 at 72h</b>, with a visible echo at
+  multiples of 24 hours from the daily cycle.</figcaption>
+</figure>
+
+<p>This single figure explains the central difficulty of the project. AQI three days from
+now is still correlated 0.63 with AQI right now. Those three values line up almost exactly
+with the R<sup>2</sup> that "assume no change" achieves — 0.808, 0.704, 0.622 — which is not a
+coincidence but the same quantity viewed twice.</p>
+
+<p><em>Decision this forced.</em> <strong>Persistence is scored alongside every model, every
+time.</strong> A result not compared against it is not a result. Six models were compared
+against it and none won (§6.2).</p>
+
+<h3>3.6 Time spent in each EPA category</h3>
+
+<figure>
+  <img src="figures/fig07.png" alt="EPA category shares by year">
+  <figcaption><b>Figure 7 — Share of hours in each EPA category, by year,</b> in the
+  official AirNow colours used by the dashboard's alerts.</figcaption>
+</figure>
+
+<p>Hazardous hours fell from 67.3% of the 2020 window to 8.6% of 2026, while Moderate hours
+rose from 1.3% to 26.0%. This is the trend of §3.2 expressed in the units the system
+actually alerts on, and it is the most legible statement of the improvement available.
+Alert thresholds are read from the same <code>aqi_category()</code> table that produced these
+colours, so the alert boundaries and the AQI scale cannot disagree.</p>
+
+<h3>3.7 Which features carry signal</h3>
+
+<figure>
+  <img src="figures/fig08.png" alt="Correlation of features with AQI">
+  <figcaption><b>Figure 8 — Correlation of each reading with AQI.</b> Pollutant
+  concentrations dominate; weather barely moves the needle.</figcaption>
+</figure>
+
+<p>PM2.5 correlates strongly with AQI and sets the index in 89.2% of hours — unsurprising,
+since AQI <em>is</em> the worst sub-index and PM2.5 is usually it. Weather correlates weakly.</p>
+
+<p><em>Decision this forced.</em> Weather features were kept, but the weak correlation was an
+early warning that they carry less than hoped. It was confirmed later and expensively:
+supplying <em>forecast</em> weather as features made every horizon worse (24h R<sup>2</sup> 0.718 → 0.695;
+72h 0.519 → 0.368), so that idea was dropped on measurement rather than kept because it
+sounded sophisticated (§7).</p>
+
+<h3>3.8 Train and test are drawn from different distributions</h3>
+
+<figure>
+  <img src="figures/fig09.png" alt="Train versus test AQI distributions">
+  <figcaption><b>Figure 9 — AQI distribution either side of a chronological 80/20 split.</b>
+  Training window mean 262 (std 142); test window mean 169 (std 109). The test period is
+  both cleaner and less variable.</figcaption>
+</figure>
+
+<p>A model fitted on the left distribution and scored on the right is being asked to predict
+a level it has never seen. This is the regime shift that dictates the target design (§5.2)
+and the evaluation design (§6.3).</p>
+
+<h2 class="pagebreak">4. From 90 days to 5.7 years</h2>
+
+<h3>4.1 Diagnosing data starvation</h3>
+
+<p>The first backfill fetched 90 days — 2,065 rows — because a single request was issued for
+the whole range and nobody checked whether more history was available. A learning curve on
+that data was still climbing steeply at 100% of the sample, which is the signature of a
+model limited by sample count rather than by algorithm:</p>
+
+<table>
+  <tr><th>Training rows</th><th class="num">R<sup>2</sup> at 24h</th></tr>
+  <tr><td>383</td><td class="num">−0.328</td></tr>
+  <tr><td>766</td><td class="num">−0.105</td></tr>
+  <tr><td>1,149</td><td class="num">+0.010</td></tr>
+  <tr><td>1,532</td><td class="num">+0.340</td></tr>
+</table>
+
+<p>Probing the API directly showed the pollution archive reaches back to 2020-11-27 —
+roughly 24× more history, sitting unused. The backfill was rewritten to chunk by calendar
+month, insert in batches with retry, and cast explicitly to the feature group's locked
+schema.</p>
+
+<h3>4.2 What 24× more data changed</h3>
+
+<p>Three earlier conclusions reversed once there was enough data to test them properly, and
+this is the clearest evidence in the project that conclusions drawn on small samples are
+not conclusions:</p>
+
+<table>
+  <tr><th style="width:34%">Question</th><th>At 2,065 rows</th><th>At ~49,000 rows</th></tr>
+  <tr><td>Lag and rolling features</td><td>Harmful — R<sup>2</sup> 0.645 → 0.211 at 24h</td><td>Helpful — 0.645 → 0.660 at 24h, 0.414 → 0.468 at 72h</td></tr>
+  <tr><td><code>day</code> / <code>month</code> features</td><td>Load-bearing — removing them collapsed R<sup>2</sup> 0.33 → −0.03</td><td>Harmful — 0.628 with, 0.645 without</td></tr>
+  <tr><td>72-hour horizon</td><td>Broken — R<sup>2</sup> −0.081</td><td>Working — +0.468</td></tr>
+  <tr><td>Neural network</td><td>Worst by far — R<sup>2</sup> −1.16</td><td>Mid-table — beats Random Forest and Ridge at 48h and 72h</td></tr>
+</table>
+
+<p>The <code>day</code>/<code>month</code> row deserves emphasis. On 90 days of data, ablating those
+features destroyed performance, which reads as "they are important". They were important
+only because the model had learned almost nothing else: with 3.4 months spanning months 4
+to 7, it was memorising "late July looks like this" rather than learning pollution
+dynamics. Same measurement, opposite interpretation, and only the larger dataset could
+tell them apart.</p>
+
+<h2>5. Features and target</h2>
+
+<h3>5.1 Labels are matched by timestamp, never by row shift</h3>
+
+<p>To forecast <em>H</em> hours ahead, each row needs the AQI value from exactly <em>H</em> hours
+later:</p>
+
+<div class="eq">future = df["timestamp"] + pd.Timedelta(hours=horizon)<br>
+df["aqi_target"] = aqi_by_time.reindex(future).values</div>
+
+<p>Matched by timestamp arithmetic, not by shifting <em>H</em> row positions. With 1.9% of hours
+missing, a positional shift silently pairs a row with the wrong future value — a bug that
+raises no error and quietly corrupts every label downstream of a gap. This is the single
+most important line of data code in the project.</p>
+
+<h3>5.2 The model predicts a change, not a level</h3>
+
+<p>Given the regime shift of §3.8, a model predicting the AQI <em>level</em> learns the average
+of a dirtier era and systematically over-predicts today. Tree models make it worse: they
+cannot extrapolate below the levels present in training. So the models predict the
+<strong>change</strong>, and the forecast is anchored to the most recent reading:</p>
+
+<div class="eq">prediction = current_aqi + w × predicted_delta</div>
+
+<p>where <code>w</code> = 0 is exactly persistence and <code>w</code> = 1 the unshrunk model. Anchoring
+tracks the falling level for free, because <code>current_aqi</code> is today's measurement. The
+form is also, algebraically, a weighted average of the model with persistence —
+<code>(1−w)·aqi + w·(aqi + delta) = aqi + w·delta</code> — so deployment needs no separate
+persistence branch at inference time. <code>w</code> is fitted on validation and stored in a
+<code>blend.json</code> beside the artifact; it is never defaulted, because a default of 1.0 would
+silently ship the unshrunk model, which loses to persistence at every horizon.</p>
+
+<h3>5.3 The feature set</h3>
+
+<p>33 features: raw weather and pollutant readings; the computed AQI and its change rate;
+cyclically encoded hour; day-of-week; AQI lags at 1, 2, 3, 6, 12 and 24 hours; and rolling
+mean and standard deviation over 3, 24 and 72 hours. Every rolling window is shifted by one
+period first, so a row never sees its own AQI in its own statistics, and all of it is
+computed on a continuous hourly grid rather than by row position, for the reason in §5.1.</p>
+
+<p><code>day</code> and <code>month</code> are computed and stored — satisfying the requirement — but
+excluded from training on the evidence in §4.2.</p>
+
+<h3>5.4 What the model actually uses</h3>
+
+<figure class="narrow">
+  <img src="figures/shap.png" alt="SHAP feature importance">
+  <figcaption><b>Figure 10 — SHAP importance for the deployed 72h model.</b> Attributions
+  are on the predicted <em>change</em> in AQI, not its level.</figcaption>
+</figure>
+
+<p>The current AQI dominates by roughly four to one over the next feature, and eight of the
+top twenty are AQI-derived (<code>aqi</code>, <code>aqi_rmean_72</code>, <code>aqi_rstd_72</code>,
+<code>aqi_lag_1</code>, <code>aqi_lag_24</code>, <code>aqi_rmean_24</code>, <code>aqi_lag_12</code>,
+<code>aqi_rmean_3</code>). Raw pollutant concentrations rank low despite PM2.5 correlating
+strongly with AQI — because AQI is already a feature, so PM2.5 is largely redundant
+given it.</p>
+
+<p><code>pressure</code> ranking second is the most interesting entry: it is a plausible proxy for
+atmospheric stagnation, which traps pollutants. It is also consistent with the ARIMA result
+in §6.2 — a model with access to nothing but AQI's own past does nearly as well as one with
+33 features, because the AQI history is where most of the signal lives.</p>
+
+<h2 class="pagebreak">6. Method and results</h2>
+
+<h3>6.1 Two leaks, and what they cost</h3>
+
+<p>Splits are chronological, never random: shuffling time-series data lets a model evaluate
+on rows whose near-identical neighbours it trained on. But chronological order alone is not
+enough. A training row at <code>T_split − 1h</code> carries a label from <code>T_split + 71h</code>,
+deep inside the test window, so the model sees test-period AQI during training.</p>
+
+<table>
+  <tr><th>Split at 72h horizon</th><th class="num">R<sup>2</sup></th></tr>
+  <tr><td>Chronological only</td><td class="num">0.326</td></tr>
+  <tr><td>Chronological + purge/embargo</td><td class="num"><strong>0.237</strong></td></tr>
+</table>
+
+<p>About <strong>27% of the apparent skill was leakage.</strong> Every result in this report
+uses the purged split.</p>
+
+<h3>6.2 Six candidates against the baseline</h3>
+
+<p>All candidates predict the change in AQI and are anchored to the latest reading, so the
+numbers are directly comparable. Frozen purged split, all three metrics as the brief
+requires:</p>
+
+<table>
+  <tr>
+    <th>Model</th>
+    <th class="num">RMSE 24h</th><th class="num">MAE 24h</th><th class="num">R<sup>2</sup> 24h</th>
+    <th class="num">R<sup>2</sup> 48h</th><th class="num">R<sup>2</sup> 72h</th>
+  </tr>
+  <tr class="best"><td><strong>Persistence</strong> (assume no change)</td>
+    <td class="num">48.55</td><td class="num">29.48</td><td class="num win">0.808</td>
+    <td class="num win">0.704</td><td class="num win">0.622</td></tr>
+  <tr><td>ARIMA(2,1,2) — AQI's own past only</td>
+    <td class="num">52.21</td><td class="num">33.08</td><td class="num">0.778</td>
+    <td class="num">0.669</td><td class="num">0.590</td></tr>
+  <tr><td>Neural network — Keras MLP 32/16</td>
+    <td class="num">57.49</td><td class="num">44.91</td><td class="num">0.730</td>
+    <td class="num">0.627</td><td class="num">0.576</td></tr>
+  <tr><td>HistGradientBoosting</td>
+    <td class="num">57.39</td><td class="num">41.99</td><td class="num">0.731</td>
+    <td class="num">0.488</td><td class="num">0.517</td></tr>
+  <tr><td>Random Forest</td>
+    <td class="num">60.60</td><td class="num">45.24</td><td class="num">0.700</td>
+    <td class="num">0.489</td><td class="num">0.504</td></tr>
+  <tr><td>Ridge regression</td>
+    <td class="num">63.02</td><td class="num">51.12</td><td class="num">0.676</td>
+    <td class="num">0.520</td><td class="num">0.503</td></tr>
+</table>
+
+<p><strong>Eighteen comparisons, zero wins.</strong> Not one standalone model beats "assume no
+change" at any horizon. Two further observations from this table are more interesting than
+the ranking itself.</p>
+
+<p><strong>ARIMA — which sees no weather and no pollutant features at all — beats every
+feature-based model at every horizon.</strong> Under a frozen split, 33 engineered features add
+nothing over the series' own autocorrelation. They are not worthless: §6.3 shows they earn
+their place once the model is retrained frequently. But their contribution over plain
+autocorrelation is zero when the model is allowed to go stale, which is the strongest
+argument available that daily retraining is not a checkbox from the brief but the mechanism
+that makes the features pay.</p>
+
+<p><strong>The neural network went from worst to mid-table on an unchanged architecture.</strong>
+It scored −1.16 on 2,065 rows and was written off as hopeless. On 49,000 it beats both
+Random Forest and Ridge at the longer horizons. Nothing about the model changed except how
+much data it saw.</p>
+
+<h3>6.3 Changing the evaluation changed which model wins</h3>
+
+<p>Every result above trains once and predicts up to fourteen months into a frozen future.
+Production does nothing of the sort: it retrains <em>daily</em> and never forecasts more than 72
+hours. Against a falling pollution level, the frozen split was mostly scoring models on
+their inability to predict a multi-year trend — a task they never face.</p>
+
+<p>The replacement is walk-forward evaluation: retrain at successive monthly origins, score
+only the following month, roll forward. Twelve retrains, roughly 7,578 predictions per
+horizon, with persistence scored on identical rows.</p>
+
+<div class="callout">
+  <h4>The finding this project is actually about</h4>
+  <p>The same gradient-boosting model scores <strong>0.738 under the frozen split and 0.831
+  walk-forward</strong> at 24 hours. Nothing about the model changed — only whether the
+  evaluation let it see recent data, as production does.</p>
+  <p>More consequentially, <strong>the ranking inverted.</strong> Under the frozen split Ridge
+  beat the tree models at every horizon; under walk-forward it is the <em>worst</em> and
+  gradient boosting wins everywhere. Ridge only looked good because a stale model cannot
+  track a falling trend and linear models extrapolate. Once retraining is frequent, that
+  advantage evaporates and flexible models win on merit.</p>
+  <p>An evaluation that does not match deployment selects the wrong model. This project
+  selected the wrong model — Random Forest, chosen from a single bake-off run only at 72h
+  and assumed to generalise to 24h and 48h — and shipped it, until the evaluation was
+  fixed.</p>
+</div>
+
+<h3>6.4 The deployed forecast</h3>
+
+<p>Persistence and the model make partly different errors, so a weighted average beats
+either. The weight is chosen on the previous month only, never on the month being scored:</p>
+
+<table>
+  <tr><th>Horizon</th><th class="num">Persistence R<sup>2</sup></th><th class="num">Model alone R<sup>2</sup></th>
+      <th class="num">Blend R<sup>2</sup></th><th class="num">Blend weight</th></tr>
+  <tr><td>24h</td><td class="num">0.814</td><td class="num">0.780</td><td class="num win">0.832</td><td class="num">0.35</td></tr>
+  <tr><td>48h</td><td class="num">0.709</td><td class="num">0.643</td><td class="num win">0.748</td><td class="num">0.35</td></tr>
+  <tr><td>72h</td><td class="num">0.628</td><td class="num">0.613</td><td class="num win">0.715</td><td class="num">0.50</td></tr>
+</table>
+
+<p>A fixed 0.5 scores within 0.005 of the tuned weight, which is reassuring: the gain is
+structural rather than the product of weight tuning.</p>
+
+<h3>6.5 Where the gain actually is — and where it is not</h3>
+
+<p>Reporting R<sup>2</sup> alone would overstate this result. All three metrics from the same run:</p>
+
+<table>
+  <tr><th>Horizon</th><th class="num">RMSE blend</th><th class="num">RMSE persistence</th>
+      <th class="num">MAE blend</th><th class="num">MAE persistence</th></tr>
+  <tr><td>24h</td><td class="num">48.4</td><td class="num">50.8</td><td class="num">30.2</td><td class="num win">29.8</td></tr>
+  <tr><td>48h</td><td class="num">59.0</td><td class="num">63.5</td><td class="num">38.9</td><td class="num">39.0</td></tr>
+  <tr><td>72h</td><td class="num">62.4</td><td class="num">71.2</td><td class="num">42.9</td><td class="num">44.0</td></tr>
+</table>
+
+<p>RMSE improves by 2.4, 4.5 and 8.8 points as the horizon lengthens. MAE is
+<strong>marginally worse than persistence at 24 hours</strong> (30.2 against 29.8), level at 48,
+and better only at 72. The blend suppresses <em>large</em> errors while leaving typical error
+roughly unchanged at short range.</p>
+
+<p>For this application that is the right trade: the expensive mistake in a health-alerting
+system is missing a smog spike, not being three points off on a calm day. But it must be
+stated plainly, because the honest summary of the result is not "better at everything".
+Read the other way: <strong>R<sup>2</sup> 0.832 at 24 hours is not 0.832 of skill, because 0.808 of it
+is available from persistence alone.</strong></p>
+
+<h2 class="pagebreak">7. What did not work</h2>
+
+<p>Seven hypotheses were tested against persistence. Five failed or were marginal. They are
+recorded here because the two that worked are only credible given the ones that did not.</p>
+
+<table>
+  <tr><th style="width:5%">#</th><th style="width:32%">Hypothesis</th><th>Outcome</th></tr>
+  <tr><td>1</td><td>More data will close the gap</td>
+      <td><strong>Partly.</strong> R<sup>2</sup> 0.34 → 0.66 at 24h, but still below persistence. It exposed the real problem rather than solving it.</td></tr>
+  <tr><td>2</td><td>Predict the delta instead of the level</td>
+      <td><strong>No effect</strong> under a frozen split — 0.703 against 0.697 at 24h. Only valuable in combination with the anchored blend.</td></tr>
+  <tr><td>3</td><td>Choose the model per horizon</td>
+      <td><strong>Real, but the winner depends on the evaluation.</strong> Frozen split says Ridge; walk-forward says gradient boosting.</td></tr>
+  <tr><td>4</td><td>Train on a trailing window only</td>
+      <td><strong>Marginal.</strong> Best 0.736 (24 months + Ridge) against 0.720 for all history. Short windows are disastrous — 3 months scores 0.036 — so the goal is to weight recent years, not discard old ones.</td></tr>
+  <tr><td>5</td><td>Add forecast weather as features</td>
+      <td><strong>Worse at every horizon.</strong> 24h 0.718 → 0.695; 72h 0.519 → 0.368. Dropped.</td></tr>
+  <tr><td>6</td><td>Evaluate walk-forward instead of frozen</td>
+      <td><strong>Worked.</strong> Closed most of the gap and, more importantly, changed which model wins.</td></tr>
+  <tr><td>7</td><td>Blend with persistence</td>
+      <td><strong>Worked.</strong> Beat the baseline at all three horizons on R<sup>2</sup> and RMSE.</td></tr>
+</table>
+
+<p>Hypothesis 5 is the one worth dwelling on. Feeding the model tomorrow's forecast weather
+sounds obviously helpful, and it made every horizon worse — badly so at 72h. Figure 8 had
+already hinted at why: weather carries little signal about AQI here, so the extra columns
+added variance without information. It was dropped on the measurement, not on the
+intuition.</p>
+
+<h2>8. Production engineering</h2>
+
+<h3>8.1 The failure mode this project kept hitting</h3>
+
+<p><strong>Eight separate times</strong>, something reported success while doing nothing
+useful, or reported a number that was wrong rather than missing. This is the most
+transferable lesson in the project, so each instance is listed with how it was caught. Note
+what the right-hand column never says: <em>an alert fired</em>.</p>
+
+<table>
+  <tr><th style="width:30%">Incident</th><th>What happened</th><th style="width:24%">Caught by</th></tr>
+  <tr><td>Automation contributed zero training rows</td>
+      <td>The live pipeline stamped rows with OpenWeather's observation time (e.g. 11:19:16) while the backfill wrote hour-aligned timestamps. Labels match at exactly <em>t</em>+24/48/72h, so an unaligned row can never match anything. Two weeks of hourly runs produced <strong>0</strong> usable examples; every daily retrain registered byte-identical metrics and reported success.</td>
+      <td>Querying the store directly: 2,100 rows, 2,065 hour-aligned, 35 not — and all 35 were the live ones.</td></tr>
+  <tr><td>Materialisation frozen for three days</td>
+      <td>Hopsworks writes land in Kafka and a background job files them into the queryable offline store. That job sat <code>INITIALIZING</code> for three days, so 49,080 inserted rows were invisible to reads. The pipeline said "inserted". CI was green.</td>
+      <td>Row count from <code>fg.read()</code> not matching what had been inserted.</td></tr>
+  <tr><td>Dashboard served a stale model</td>
+      <td>The training pipeline moved to a delta target with lag features; the dashboard kept its own copy of feature assembly, still loaded <code>aqi_random_forest_*</code>, and would have rendered a predicted <em>change</em> of −4 as "AQI 4 — Good" for a city sitting at 170.</td>
+      <td>Reading the serving path against the training code rather than trusting it.</td></tr>
+  <tr><td>Daily job dead for 24 hours</td>
+      <td>A commit changed <code>load_training_data</code> to return four values; <code>register.py</code> still unpacked three. The daily job failed instantly, at 02:00 UTC, in a tab nobody opens. The same change silently broke <code>explain.py</code>, which nothing imports.</td>
+      <td>Noticing the workflow history was entirely red while the hourly job was entirely green.</td></tr>
+  <tr><td>Materialisation frozen for eleven days</td>
+      <td>The same job as incident 2, wedged again from 2026-08-15 to 2026-08-26. The hourly
+      pipeline inserted correctly and printed <code>Inserted feature row&nbsp;&hellip;</code> as its
+      last line, three lines after a <code>UserWarning</code> saying the materialisation job was
+      already running and the new execution had been aborted. <strong>430 green runs.</strong>
+      The dashboard served an eleven-day-old reading under a caption reading "data refreshed
+      hourly".</td>
+      <td>Reading the deployed dashboard as a stranger would, while reviewing three
+      classmates' submissions for comparison.</td></tr>
+  <tr><td>A gap behind current rows</td>
+      <td>Clearing that stall did not fix the dashboard. Three fresh rows arrived on top of an
+      eleven-day hole, so <code>MAX(timestamp)</code> was one hour old while serving &mdash; which
+      needs 72 contiguous hours for its rolling features &mdash; correctly fell back to the last
+      <em>complete</em> row, from before the gap. <strong>The freshness assertion written that
+      morning to catch exactly this class of failure passed</strong>, because it measured the
+      newest timestamp and never asked whether the hours behind it existed.</td>
+      <td>Two readings disagreeing: the pipeline reported the store current, the dashboard
+      showed it eleven days stale. Both were right.</td></tr>
+  <tr><td>Eleven hours that had not happened</td>
+      <td>The backfill that closed the gap asked both source APIs for a range ending "today",
+      and both return the remainder of the calendar day as <em>forecast</em>. Eleven rows dated
+      13:00&ndash;23:00 UTC were stored as observations. Left alone, the nightly retrain would
+      have used forecast values as features <em>and</em> as labels.</td>
+      <td>The freshness check reporting <code>CURRENT</code> alongside a lag of <strong>&minus;11.0h</strong>
+      and coverage of <strong>59/48 hours</strong> &mdash; a verdict its own numbers contradicted.</td></tr>
+  <tr><td>The storage layer renamed the evidence</td>
+      <td>Hopsworks rewrites metric keys on write: <code>persistence_MAE</code> came back as
+      <code>persistence_mae</code> and <code>persistence_R2</code> as <code>persistence__r2</code>, with a
+      doubled underscore, while top-level <code>MAE</code> and <code>R2</code> survived untouched. The
+      dashboard's exact-match lookup found neither, rendered every baseline column empty, and
+      concluded that a model beating its baseline <em>"beats baseline on: nothing"</em>.</td>
+      <td>Inspecting the raw registry metrics after noticing the comparison columns were
+      uniformly blank rather than mixed.</td></tr>
+</table>
+
+<p><strong>Green CI is not evidence.</strong> Every one of these was found by querying the thing
+that should have changed, not by reading a status badge. That is now written into the
+repository's conventions document.</p>
+
+<h3>8.2 Engineering decisions worth defending</h3>
+
+<ul>
+  <li><strong>One serving path.</strong> After the stale-dashboard incident, feature assembly
+  and the blend moved into a single module that both the API and the dashboard call. Two
+  independent copies of that logic is exactly how the bug happened.</li>
+  <li><strong>Models load lazily, not at startup.</strong> A startup hook means a transient
+  registry outage stops the service from booting; lazy loading degrades one retryable
+  request instead.</li>
+  <li><strong><code>/health</code> never contacts the registry.</strong> It reports cached state. A
+  health check that can trigger a login becomes the load it is meant to detect.</li>
+  <li><strong>Missing data returns 503, not 500.</strong> The service is fine; the data is not
+  there yet; the client should retry.</li>
+  <li><strong>The blend weight ships in the API response.</strong> A consumer cannot interpret
+  the forecast without knowing how much of it is model and how much is persistence.</li>
+  <li><strong>A horizon with no registered weight is withheld,</strong> and named in
+  <code>unavailable_horizons</code>, rather than served with a guessed one.</li>
+  <li><strong>Every Hopsworks call is retried.</strong> The registry write was the one that was
+  not, and it is exactly where a run failed — HTTP 500, <code>errorCode 110043</code>, a
+  ClusterJ <code>code 626 Tuple did not exist</code> raised inside Hopsworks' own filesystem
+  metadata layer, after two of three artifacts had uploaded.</li>
+  <li><strong>The loader walks model versions downwards</strong> until one loads, because that
+  failed write can leave a version whose metadata exists but whose files do not. Serving
+  last week's intact model beats refusing to start.</li>
+  <li><strong>Bulk operations run on a GitHub runner.</strong> Sustained transfers from the
+  development machine drop mid-stream — verified as a network limitation, not a code bug,
+  by a 30-packet ping at 0% loss alongside a failed 10 MB upload.</li>
+  <li><strong>Dependencies are pinned,</strong> which immediately exposed that the runner had
+  been silently installing TensorFlow 2.19.1 and NumPy 2.1.3 while development used 2.21.0
+  and 2.4.6. A dependency conflict that only appears once you pin is a conflict you already
+  had.</li>
+</ul>
+
+<h3>8.3 Making the system say what it is doing</h3>
+
+<p>Seven of the eight incidents above were caught by a person reading something. That is not
+a monitoring strategy, so the last week of the project was spent making the system report on
+the state it is supposed to produce rather than on the call it just made.</p>
+
+<ul>
+  <li><strong>The hourly job asserts its own outcome.</strong> After inserting, it reads the
+  offline store back and fails the run unless the newest row is recent <em>and</em> at least 80%
+  of the last 48 hours are present. Two versions of this check were needed: the first looked
+  only at the newest timestamp and passed over an eleven-day hole; the second added coverage
+  and still reported <code>CURRENT</code> on a negative lag. It now separates four states &mdash;
+  current, stale, gapped, future-dated &mdash; because each has a different remedy and naming
+  the wrong one costs an hour in the wrong web UI.</li>
+  <li><strong>A read it cannot complete is a warning, not a failure.</strong> Arrow Flight has
+  its own outages, and losing an hour of collection to a monitoring call is the worse trade.
+  Green must mean verified; amber means unverified; they are not the same claim.</li>
+  <li><strong>Verdicts are published as run annotations,</strong> not printed into a collapsed
+  log step. <code>CURRENT: newest offline row 2026-08-27 02:00:00+00:00, 3.0h behind the insert,
+  45/48 hours present</code> appears on the run summary and in the checks API. A number nobody
+  can find is not monitoring; it is a number.</li>
+  <li><strong>Scheduled jobs check in to an external service.</strong> Error reporting only
+  fires when something throws, and for eleven days nothing threw. A check-in inverts that:
+  the job reports that it started and finished, so <em>silence becomes the alarm</em>.</li>
+  <li><strong>The dashboard states the age of what it is showing,</strong> in words, with a
+  warning past two hours and a red banner past a day. The caption that used to promise
+  "refreshed hourly" now describes the pipeline's schedule, not the data's freshness &mdash; a
+  claim a page makes about itself has to be falsifiable on that page.</li>
+  <li><strong>Handled failures are still reported.</strong> The dashboard deliberately serves
+  the last good reading rather than a traceback when the feature store refuses a read.
+  Swallowed is not the same as unnoticed, so that path sends the exception onward while the
+  reader sees a clean page.</li>
+  <li><strong>The pipeline attempts its own repair.</strong> On a stale store it stops a
+  materialisation execution that has been non-terminal for over 45 minutes and starts a fresh
+  one &mdash; and <em>still fails the run</em>. Self-healing that hides the incident would recreate
+  the original problem.</li>
+</ul>
+
+<h3>8.4 A scheduler is not a delivery guarantee</h3>
+
+<p>The 1.9% of missing hours in the dataset has a mundane cause that took until the final week
+to identify: <strong>GitHub does not run scheduled workflows on time.</strong> Measured firings of
+this repository's hourly schedule:</p>
+
+<table>
+  <tr><th style="width:22%">Date</th><th>Firings (UTC)</th><th style="width:14%">Count</th></tr>
+  <tr><td>2026-08-26</td><td>12:27, 13:43, 14:32, 16:06, 18:31, 21:21</td><td>6</td></tr>
+  <tr><td>2026-08-27</td><td>02:18, 13:11, 18:56</td><td>3</td></tr>
+</table>
+
+<p>Gaps of up to five hours against a nominal one. Scheduled workflows are queued at low
+priority and dropped under load, and minute <code>0</code> &mdash; the obvious choice, and the one
+originally used &mdash; is the most contended minute on the platform. The cron was moved to
+minute 23, and the freshness tolerance was set to six hours for the same reason: an alert
+should mean the job has stopped, not that the platform is busy.</p>
+
+<p>This also corrects an earlier reading of the same evidence. A stale store was diagnosed as
+a wedged materialisation job, which sent someone to the Hopsworks Jobs UI to find every
+execution green; the store was behind because the workflow had fired three times in
+seventeen hours. Two causes, one symptom. The failure message now names both and the
+annotation says which.</p>
+
+<h3>8.5 Testing</h3>
+
+<p><strong>157 tests</strong>, none requiring credentials &mdash; the feature store, the model
+registry and the error reporter are all substituted, so a reviewer can clone the repository
+and run the suite with no accounts. Coverage is concentrated where failures have actually
+occurred: the EPA AQI calculation including negative concentrations and breakpoint gaps; the
+blend arithmetic and its clamping; withheld horizons; alert selection; schema drift;
+model-version selection and fallback; and the ARIMA path against a series with holes.</p>
+
+<p>The more useful property is that the newer tests are named after real incidents and carry
+the real numbers. <code>test_the_eleven_day_stall_fails</code> feeds the check a 2026-08-15 offline
+timestamp against a 2026-08-26 insert. <code>test_the_real_24h_result_does_not_claim_an_mae_win</code>
+asserts that with R&sup2; 0.832 against 0.814 but MAE 30.2 against 29.8, the dashboard reports a
+win on R&sup2; and RMSE and <em>not</em> on MAE. <code>test_the_mangled_baseline_keys_are_found</code> pins
+the exact keys the registry returned. A test that encodes a bug that actually happened is
+worth more than a test that encodes an intention.</p>
+
+<h2>9. Limitations</h2>
+
+<ol>
+  <li><strong>The AQI is an hourly proxy, not official EPA AQI.</strong> Breakpoints are applied
+  to instantaneous readings rather than their proper averaging windows (§2.2). More volatile
+  than the official index; correct and consistent as a forecasting target.</li>
+  <li><strong>MAE at 24 hours is marginally worse than persistence</strong> (§6.5). The gain is
+  in large errors, and it grows with horizon.</li>
+  <li><strong>Absolute error is wide.</strong> MAE of 30–43 AQI points can straddle an EPA
+  category boundary, so alerts are directionally useful but not precise near thresholds.</li>
+  <li><strong>ARIMA(2,1,2) does not always converge.</strong> statsmodels emits
+  <code>ConvergenceWarning</code> at longer horizons. The ranking is stable and the forecasts
+  usable, but it is a real limitation of the statistical baseline.</li>
+  <li><strong>One city, one pollutant regime.</strong> Nothing here has been tested outside
+  Lahore, where PM2.5 sets the index 89% of the time. A city dominated by ozone would likely
+  need a different feature set.</li>
+  <li><strong>The forecast horizon is capped by the anchor.</strong> Anchoring to the current
+  reading is what makes the trend tracking work, and it is also why this design would not
+  extend to week-ahead forecasting.</li>
+  <li><strong>Free-tier dependence.</strong> Two outages of the Hopsworks Query Service blocked
+  analysis during this project. The system degrades correctly, but a submitted analysis
+  should not depend on a service being up; a committed data snapshot is the outstanding fix.</li>
+  <li><strong>The hourly job over-installs.</strong> It installs the full data-science stack 24
+  times a day and imports six packages. Known, not yet fixed.</li>
+</ol>
+
+<h2>10. What I would do next</h2>
+
+<ol>
+  <li><strong>Commit a feature snapshot</strong> so the EDA and the model comparison are
+  reproducible without credentials or a live service — for a reviewer as much as for
+  resilience.</li>
+  <li><strong>Weight recent years rather than truncating.</strong> Hypothesis 4 showed short
+  windows are harmful and long ones dilute; sample weighting decaying with age is the
+  obvious middle path and was not tested.</li>
+  <li><strong>Roll concentrations to their EPA averaging windows</strong> and re-measure
+  everything against the corrected target, reporting both.</li>
+  <li><strong>Predict the winter peak specifically.</strong> §3.3 shows winter has not improved
+  and is when alerts matter. A model trained or evaluated on smog season alone is a more
+  useful product than one averaged across the year.</li>
+  <li><strong>Quantile forecasts rather than point forecasts.</strong> A health alert wants "80%
+  chance of exceeding 300", not a single number with an implicit ±40.</li>
+</ol>
+
+<h2>11. Requirement coverage</h2>
+
+<table>
+  <tr><th style="width:5%">#</th><th style="width:44%">Requirement</th><th>Where</th></tr>
+  <tr><td>1</td><td>Fetch raw weather and pollutant data from an external API</td><td><code>feature_pipeline/fetch.py</code> — OpenWeather</td></tr>
+  <tr><td>2</td><td>Compute features and targets; time features (hour, day, month) and derived features such as AQI change rate</td><td><code>feature_pipeline/pipeline.py</code>, <code>training_pipeline/data.py</code> — all stored; <code>day</code>/<code>month</code> excluded from training on measurement (§4.2)</td></tr>
+  <tr><td>3</td><td>Store features in a feature store</td><td>Hopsworks — <code>feature_pipeline/hopsworks_store.py</code></td></tr>
+  <tr><td>4</td><td>Backfill historical features and targets</td><td><code>backfill/</code> — 49,153 rows from 2020-11-27</td></tr>
+  <tr><td>5</td><td>Training pipeline: read, train, evaluate, register</td><td><code>training_pipeline/</code></td></tr>
+  <tr><td>6</td><td>scikit-learn (Random Forest, Ridge) and TensorFlow/PyTorch</td><td>Ridge, Random Forest, HistGradientBoosting, Keras MLP, ARIMA — §6.2</td></tr>
+  <tr><td>7</td><td>Evaluate with RMSE, MAE and R<sup>2</sup></td><td><code>evaluate.py</code> — all three, every model, every horizon</td></tr>
+  <tr><td>8</td><td>Store the model in a model registry</td><td>Hopsworks registry — <code>register.py</code></td></tr>
+  <tr><td>9</td><td>CI/CD: features hourly, training daily</td><td><code>.github/workflows/</code> — plus tests on push and explainability weekly. Scheduled hourly; GitHub delivers 3–7 firings a day (§8.4)</td></tr>
+  <tr><td>10</td><td>Web app loading model and features, descriptive dashboard</td><td><code>app/app.py</code> — Streamlit + Plotly</td></tr>
+  <tr><td>11</td><td>Streamlit/Gradio <em>and</em> Flask/FastAPI</td><td><code>app/app.py</code> and <code>api/main.py</code>, over one serving core</td></tr>
+  <tr><td>12</td><td>EDA to identify trends</td><td><code>notebooks/01_eda.ipynb</code> — §3</td></tr>
+  <tr><td>13</td><td>A variety of models, statistical to deep learning</td><td>ARIMA through Keras MLP — §6.2</td></tr>
+  <tr><td>14</td><td>SHAP or LIME feature importance</td><td><code>training_pipeline/explain.py</code> — §5.4; ranking published as data and rendered interactively with readable feature names</td></tr>
+  <tr><td>15</td><td>Alerts for hazardous AQI levels</td><td><code>serving/forecast.py</code>, thresholds from the same table as the AQI scale</td></tr>
+  <tr><td>16</td><td>A detailed report</td><td>This document</td></tr>
+</table>
+
+<h2>12. Reproducing this</h2>
+
+<div class="eq">git clone https://github.com/imadkhan4478/AQI_Predictor.git<br>
+python -m venv .venv &amp;&amp; .venv\Scripts\activate<br>
+pip install -r requirements.txt<br>
+pip install -r requirements-deep.txt&nbsp;&nbsp;<span style="color:#6b7078"># optional: the neural-net row</span><br>
+<br>
+pytest&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#6b7078"># 72 tests, no credentials needed</span><br>
+uvicorn api.main:app --reload&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#6b7078"># API + docs at /docs</span><br>
+streamlit run app/app.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#6b7078"># dashboard</span></div>
+
+<p>The pipelines and the analysis need six environment variables, documented in
+<code>.env.example</code>; they are held as GitHub Actions secrets and no secret has ever entered
+the repository, verified by a full history scan. Anything reading the whole feature group
+should be run through the <strong>Analysis</strong> workflow rather than locally, for the transfer
+reason in §8.2.</p>
+
+<p class="footnote" style="margin-top:16pt; border-top:1px solid var(--rule); padding-top:8pt">
+Every figure in this report was produced by <code>notebooks/01_eda.ipynb</code> or
+<code>training_pipeline/explain.py</code> against the live feature store, and every number was
+read from an executed run rather than carried forward from an earlier draft. Two figures
+were found to be wrong during that check and are corrected here: the pollution decline
+(§3.2) and the proportion of missing hours. The chronological record, including the failed
+attempts in the order they happened, is <code>docs/EXPERIMENT_LOG.md</code>.</p>

@@ -16,6 +16,7 @@ feeds both a JSON API and a Streamlit dashboard.
 | **Exploratory analysis** | [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) — executed, renders on GitHub |
 | **Conventions** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — read before changing anything |
 | **Live dashboard** | <https://aqipredictor-ywkyutcdt9avvqymaaln69.streamlit.app/> |
+| **Report source** | [`docs/report/`](docs/report/) — `python build.py` regenerates the PDF, two passes so the contents page carries real page numbers |
 
 ## Headline result
 

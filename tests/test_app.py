@@ -313,3 +313,26 @@ class TestExplainabilityPanel:
         monkeypatch.setattr(dash, "SHAP_RANKING_PATH", str(tmp_path / "absent.json"))
         dash.shap_ranking.clear()
         assert dash.shap_ranking() is None
+
+
+class TestReadingCards:
+    def test_the_card_carries_the_category_colour_as_its_accent(self):
+        html = dash.reading_card(148, "Unhealthy for Sensitive Groups", "#ff7e00", "Observed")
+        assert "--accent:#ff7e00" in html
+        assert "148" in html and "Unhealthy for Sensitive Groups" in html
+
+    def test_the_current_reading_is_emphasised(self):
+        assert 'class="reading now"' in dash.reading_card(1, "Good", "#0f0", "x", emphasis=True)
+        assert 'class="reading "' in dash.reading_card(1, "Good", "#0f0", "x")
+
+    def test_error_is_shown_to_one_decimal_so_a_narrow_loss_stays_visible(self):
+        """At whole-AQI precision the real 24h pair reads "±30 · baseline ±30",
+        which hides that the blend is worse than persistence on MAE."""
+        text = dash.typical_error_text({"MAE": 30.238, "persistence_mae": 29.838})
+        assert "±30.2" in text and "±29.8" in text
+
+    def test_a_missing_baseline_is_not_invented(self):
+        assert dash.typical_error_text({"MAE": 30.2}) == "Typical error ±30.2 AQI"
+
+    def test_a_version_without_metrics_says_so(self):
+        assert "not recorded" in dash.typical_error_text({})

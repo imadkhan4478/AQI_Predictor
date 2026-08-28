@@ -77,21 +77,42 @@ AXIS_CEILING = 300
 
 CARD_CSS = """
 <style>
-/* Text colour is set per card from the background's luminance, not here. */
-.aqi-hero {
-    border-radius: 12px;
-    padding: 1.5rem 1.75rem;
+/* A reading card: neutral surface, category colour carried by a left rule and by
+   the number itself. Four large saturated fills read as a warning banner rather
+   than as data. */
+.reading {
+    border: 1px solid rgba(0,0,0,0.10);
+    border-left: 6px solid var(--accent);
+    border-radius: 8px;
+    padding: 0.85rem 1.1rem 0.95rem;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(16,24,40,0.04);
+    height: 100%;
 }
-.aqi-hero .value { font-size: 3.2rem; font-weight: 700; line-height: 1; }
-.aqi-hero .category { font-size: 1.2rem; font-weight: 600; margin-top: 0.25rem; }
+.reading .when {
+    font-size: 0.70rem; letter-spacing: 0.04em; text-transform: uppercase;
+    color: #667085; font-weight: 700;
+}
+.reading .value {
+    font-size: 2.4rem; font-weight: 700; line-height: 1.15; color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}
+.reading.now .value { font-size: 3.1rem; }
+.reading .category { font-size: 0.9rem; font-weight: 600; color: #344054; }
+.reading .foot { font-size: 0.72rem; color: #667085; margin-top: 0.4rem; }
+
+/* The legend is a key, not a control: quiet, aligned, out of the main column. */
 .legend-chip {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    padding: 0.15rem 0.6rem; border-radius: 999px;
-    font-size: 0.78rem; margin: 0.15rem;
+    display: inline-flex; align-items: center;
+    padding: 0.12rem 0.5rem; border-radius: 4px;
+    font-size: 0.70rem; margin: 0.1rem 0.1rem 0.1rem 0; font-weight: 600;
+}
+.sidebar-label {
+    font-size: 0.68rem; letter-spacing: 0.07em; text-transform: uppercase;
+    color: #667085; font-weight: 700; margin: 0.9rem 0 0.2rem;
 }
 </style>
 """
-
 
 # The training pipeline registers new versions daily. Without a TTL the models --
 # and the metrics shown beside them -- are whatever was in the registry when this
@@ -279,10 +300,8 @@ def render_freshness(payload):
     return age_hours
 
 
-REPORT_URL = (
-    "https://github.com/imadkhan4478/AQI_Predictor/blob/main/docs/"
-    "AQI_Predictor_Technical_Report.pdf"
-)
+REPO_URL = "https://github.com/imadkhan4478/AQI_Predictor"
+REPORT_URL = f"{REPO_URL}/blob/main/docs/AQI_Predictor_Technical_Report.pdf"
 
 
 def metric(metrics, name):
@@ -399,13 +418,21 @@ def render_evaluation(details):
     )
 
 
-def render_hero(reading):
+def reading_card(aqi, category, color, when, foot="", emphasis=False):
+    """One AQI reading, rendered the same way wherever it appears."""
+    return f"""<div class="reading {'now' if emphasis else ''}" style="--accent:{color};">
+        <div class="when">{when}</div>
+        <div class="value">{aqi}</div>
+        <div class="category">{category}</div>
+        <div class="foot">{foot}</div>
+    </div>"""
+
+
+def render_hero(reading, when="Observed", foot=""):
     st.markdown(
-        f"""<div class="aqi-hero" style="background:{reading['color']};
-                    color:{readable_text_color(reading['color'])};">
-                <div class="value">{reading['aqi']}</div>
-                <div class="category">{reading['category']}</div>
-            </div>""",
+        reading_card(
+            reading["aqi"], reading["category"], reading["color"], when, foot, emphasis=True
+        ),
         unsafe_allow_html=True,
     )
 
@@ -490,11 +517,13 @@ def plot_forecast(payload):
 
     fig.add_vline(
         x=observed_at.astimezone(local).timestamp() * 1000,
-        line=dict(color="#9aa4b2", width=1, dash="dash"),
+        line=dict(color="#475467", width=1.5, dash="dash"),
+        annotation_text="forecast origin",
+        annotation_position="top right",
+        annotation=dict(font_size=10, font_color="#475467"),
     )
 
     fig.update_layout(
-        title="Observed AQI and 3-day forecast",
         yaxis_title="AQI",
         yaxis_range=[0, AXIS_CEILING],
         legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0),
@@ -506,42 +535,88 @@ def plot_forecast(payload):
     return fig
 
 
-def render_forecast_cards(payload):
-    """One card per horizon, dated, with the typical error beside the number.
+def render_forecast_cards(payload, details):
+    """The current reading and the three horizons, as one row of equal cards.
 
-    A forecast of 141 with no sense of its error invites a precision it does not
-    have. The error shown is the walk-forward MAE for that horizon -- measured, not
-    assumed -- and the baseline's is shown beside it so the number means something.
+    Typical error is shown to one decimal beside the baseline's. Rounded to whole
+    AQI the 24h pair reads "±30 · baseline ±30", concealing that the blend is 30.2
+    against persistence's 29.8 -- slightly worse. A comparison a reader cannot lose
+    is the whole point of showing it.
     """
-    details = {info["horizon_hours"]: info for info in fetch_model_details()}
-    columns = st.columns(len(payload["forecast"]) or 1)
-    for column, point in zip(columns, forecast_points(payload)):
-        info = details.get(point["horizon_hours"], {})
-        metrics = info.get("metrics") or {}
-        mae = metric(metrics, "MAE")
-        baseline_mae = metric(metrics, "persistence_MAE")
-        local_when = point["at"].astimezone(ZoneInfo(DISPLAY_TIMEZONE))
+    by_horizon = {info["horizon_hours"]: info for info in details}
+    points = forecast_points(payload)
+    local = ZoneInfo(DISPLAY_TIMEZONE)
+    _, observed_text, tz_label = observation_age(payload)
+
+    columns = st.columns(1 + len(points), gap="medium")
+    with columns[0]:
+        render_hero(
+            payload["current"],
+            when=f"Observed · {observed_text} {tz_label}",
+            foot="Measured, not forecast",
+        )
+
+    for column, point in zip(columns[1:], points):
+        metrics = (by_horizon.get(point["horizon_hours"], {}).get("metrics")) or {}
+        foot = typical_error_text(metrics)
+        when = f"+{point['horizon_hours']}h · {point['at'].astimezone(local):%a %d %b, %H:%M}"
         with column:
             st.markdown(
-                f"""<div class="aqi-hero" style="background:{point['color']};
-                            color:{readable_text_color(point['color'])};">
-                        <div style="font-size:0.8rem;opacity:0.85;">
-                            {point['horizon_hours']}h &middot; {local_when:%a %d %b, %H:%M}
-                        </div>
-                        <div class="value" style="font-size:2.4rem;">{point['aqi']}</div>
-                        <div class="category" style="font-size:0.95rem;">{point['category']}</div>
-                    </div>""",
+                reading_card(point["aqi"], point["category"], point["color"], when, foot),
                 unsafe_allow_html=True,
             )
-            if mae is None:
-                st.caption("Typical error not recorded for this model version")
-            elif baseline_mae is None:
-                st.caption(f"Typical error ±{mae:.0f} AQI (walk-forward MAE)")
-            else:
-                st.caption(
-                    f"Typical error ±{mae:.0f} AQI · baseline ±{baseline_mae:.0f} "
-                    "(walk-forward MAE)"
-                )
+
+
+def typical_error_text(metrics):
+    """The horizon's measured error beside the baseline's, to one decimal.
+
+    Rounded to whole AQI the 24h pair reads "±30 · baseline ±30", concealing that
+    the blend is 30.2 against persistence's 29.8 -- slightly worse. A comparison a
+    reader cannot lose is the whole point of showing it.
+    """
+    mae = metric(metrics, "MAE")
+    baseline = metric(metrics, "persistence_MAE")
+    if mae is None:
+        return "Typical error not recorded for this version"
+    if baseline is None:
+        return f"Typical error ±{mae:.1f} AQI"
+    return f"Typical error ±{mae:.1f} · baseline ±{baseline:.1f}"
+
+
+def render_sidebar(payload, details):
+    """Project identity, the EPA key, and what is deployed.
+
+    Reference material a reader consults once. Keeping it out of the main column
+    leaves that column for the forecast and the evidence behind it.
+    """
+    with st.sidebar:
+        st.markdown("### 10Pearls AQI Predictor")
+        st.caption("Data Science Internship Programme  \nImad Khan · BS Data Science, GIKI")
+        st.divider()
+
+        st.markdown('<div class="sidebar-label">City</div>', unsafe_allow_html=True)
+        st.write(f"**{payload['city']}**, Punjab · Pakistan")
+
+        dominant = payload["current"].get("dominant_pollutant")
+        if dominant:
+            st.markdown(
+                '<div class="sidebar-label">Dominant pollutant</div>', unsafe_allow_html=True
+            )
+            st.write(f"**{dominant}**")
+
+        st.markdown('<div class="sidebar-label">EPA AQI scale</div>', unsafe_allow_html=True)
+        render_legend()
+
+        st.markdown('<div class="sidebar-label">Deployed models</div>', unsafe_allow_html=True)
+        for info in details:
+            weight = info["blend_weight"]
+            weight_text = "—" if weight is None else f"{weight:.2f}"
+            st.caption(
+                f"{info['horizon_hours']}h · v{info['version']} · blend weight {weight_text}"
+            )
+
+        st.markdown('<div class="sidebar-label">Documentation</div>', unsafe_allow_html=True)
+        st.caption(f"[Technical report]({REPORT_URL})  \n[Source and experiment log]({REPO_URL})")
 
 
 def main():
@@ -551,10 +626,10 @@ def main():
     )
     st.markdown(CARD_CSS, unsafe_allow_html=True)
 
-    st.title(f"🌫️ 10Pearls AQI Predictor — {city_name}")
+    st.title(f"Air quality forecast — {city_name}")
     st.caption(
-        "3-day Air Quality Index forecast · gradient boosting blended with a persistence "
-        "baseline, retrained daily · feature pipeline scheduled hourly"
+        "US EPA Air Quality Index at 24, 48 and 72 hours · gradient boosting blended with a "
+        "persistence baseline, retrained daily · feature pipeline scheduled hourly"
         + (f" · served by the API at {API_URL}" if API_URL else "")
     )
 
@@ -597,25 +672,23 @@ def main():
             + " model, so its forecast is withheld. Re-run the training pipeline."
         )
 
-    col1, col2 = st.columns([1, 2], gap="large")
-    with col1:
-        render_hero(payload["current"])
-    with col2:
-        st.write("")
-        _, local_text, tz_label = observation_age(payload)
-        st.caption(f"Observed **{local_text} {tz_label}** · stored as {payload['observed_at']}")
-        if payload["current"]["dominant_pollutant"]:
-            st.write(f"Dominant pollutant: **{payload['current']['dominant_pollutant']}**")
-        render_legend()
+    details = fetch_model_details()
+    render_sidebar(payload, details)
+    render_forecast_cards(payload, details)
 
     if payload["alert"]:
         alert_fn = st.error if payload["alert"]["severity"] == "critical" else st.warning
-        alert_fn(f"**{payload['alert']['message']}**")
+        alert_fn(payload["alert"]["message"])
 
-    render_forecast_cards(payload)
+    st.subheader("Observed AQI and 3-day forecast")
     st.plotly_chart(plot_forecast(payload), use_container_width=True)
+    st.caption(
+        "The dashed rule is the **forecast origin** — the newest observation with a complete "
+        "set of lag features, which is what the models were given. Readings to the right of "
+        "it arrived afterwards and the forecast did not have them; where they diverge, that "
+        "divergence is the error as it happens."
+    )
 
-    details = fetch_model_details()
     render_evaluation(details)
 
     with st.expander("Why does the model predict this? (SHAP feature importance)"):

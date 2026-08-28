@@ -152,6 +152,11 @@
   .footnote { font-size: 8.4pt; color: var(--muted); }
   .tp-foot, .toc, figcaption, h4 { hyphens: none; }
   .pagebreak { break-before: page; }
+  /* 24pt, not 16: two-digit markers clip against the text block at 16. */
+  .refs ol { margin: 2pt 0 8pt 0; padding-left: 24pt; }
+  .refs li { margin-bottom: 4.5pt; text-align: left; }
+  .refs p b { font-size: 10pt; }
+  .mono { font-family: var(--mono, monospace); font-size: 9pt; color: #43484f; }
 </style>
 
 <div class="title-page">
@@ -987,7 +992,7 @@ python -m venv .venv &amp;&amp; .venv\Scripts\activate<br>
 pip install -r requirements.txt<br>
 pip install -r requirements-deep.txt&nbsp;&nbsp;<span style="color:#6b7078"># optional: the neural-net row</span><br>
 <br>
-pytest&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#6b7078"># 72 tests, no credentials needed</span><br>
+pytest&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#6b7078"># 162 tests, no credentials needed</span><br>
 uvicorn api.main:app --reload&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#6b7078"># API + docs at /docs</span><br>
 streamlit run app/app.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#6b7078"># dashboard</span></div>
 
@@ -996,6 +1001,74 @@ streamlit run app/app.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<s
 the repository, verified by a full history scan. Anything reading the whole feature group
 should be run through the <strong>Analysis</strong> workflow rather than locally, for the transfer
 reason in §8.2.</p>
+
+
+<h2>13. References</h2>
+
+<p class="footnote" style="margin-bottom:10pt">Standards and data sources are cited because
+the AQI is a defined quantity and this system's fidelity to that definition is checkable.
+Methods are cited where a design decision follows from a published result rather than from
+preference.</p>
+
+<div class="refs">
+<p><b>Standards and regulation</b></p>
+<ol>
+  <li>U.S. Environmental Protection Agency. <i>Technical Assistance Document for the
+  Reporting of Daily Air Quality &mdash; the Air Quality Index (AQI)</i>. EPA-403/B-26-003,
+  May 2026. Source of the breakpoint tables, the truncation rules and the dominant-pollutant
+  convention implemented in <code>feature_pipeline/aqi.py</code>.</li>
+  <li>U.S. Environmental Protection Agency. <i>Reconsideration of the National Ambient Air
+  Quality Standards for Particulate Matter</i>. Final rule, 89 FR 16202, 6 March 2024. Lowered
+  the primary annual PM<sub>2.5</sub> standard from 12.0 to 9.0&nbsp;&micro;g/m&sup3; and revised the
+  PM<sub>2.5</sub> AQI categories; this project uses the revised breakpoints.</li>
+  <li>40 CFR Part 58, Appendix G &mdash; <i>Uniform Air Quality Index (AQI) and Daily
+  Reporting</i>. The regulatory basis for AQI reporting, including the averaging periods this
+  project departs from and discloses (&sect;2.2).</li>
+</ol>
+
+<p><b>Data sources</b></p>
+<ol start="4">
+  <li>OpenWeather. <i>Air Pollution API</i> and <i>Current Weather Data API</i>. Hourly
+  pollutant concentrations, current conditions, and the free historical air-pollution
+  archive. <span class="mono">openweathermap.org/api</span></li>
+  <li>Open-Meteo. <i>Historical Weather API (ERA5 reanalysis)</i>. Historical weather for the
+  backfill, used because OpenWeather's weather history requires a paid plan &mdash; the
+  asymmetry described in &sect;2.1. <span class="mono">open-meteo.com</span></li>
+</ol>
+
+<p><b>Method</b></p>
+<ol start="6">
+  <li>Friedman, J.&nbsp;H. (2001). Greedy function approximation: a gradient boosting machine.
+  <i>Annals of Statistics</i>, 29(5), 1189&ndash;1232. The family of the deployed model.</li>
+  <li>Bergmeir, C., &amp; Ben&iacute;tez, J.&nbsp;M. (2012). On the use of cross-validation for time
+  series predictor evaluation. <i>Information Sciences</i>, 191, 192&ndash;213. The argument for
+  rolling-origin evaluation over a random split, which &sect;6.1 and &sect;6.3 arrived at
+  independently by measurement.</li>
+  <li>Hyndman, R.&nbsp;J., &amp; Athanasopoulos, G. (2021). <i>Forecasting: Principles and
+  Practice</i> (3rd ed.). OTexts. Source of the persistence-baseline convention and of
+  time-series cross-validation as described in &sect;6.</li>
+  <li>Box, G.&nbsp;E.&nbsp;P., &amp; Jenkins, G.&nbsp;M. (1970). <i>Time Series Analysis:
+  Forecasting and Control</i>. Holden-Day. ARIMA, the statistical entry in the model
+  comparison.</li>
+  <li>Lundberg, S.&nbsp;M., &amp; Lee, S.-I. (2017). A unified approach to interpreting model
+  predictions. <i>Advances in Neural Information Processing Systems</i> 30 (NeurIPS 2017).
+  SHAP, used for the attributions in &sect;5.4.</li>
+</ol>
+
+<p><b>Software</b></p>
+<ol start="11">
+  <li>Pedregosa, F., et&nbsp;al. (2011). Scikit-learn: machine learning in Python.
+  <i>Journal of Machine Learning Research</i>, 12, 2825&ndash;2830.</li>
+  <li>Seabold, S., &amp; Perktold, J. (2010). statsmodels: econometric and statistical
+  modeling with Python. <i>Proceedings of the 9th Python in Science Conference</i>.</li>
+  <li>Harris, C.&nbsp;R., et&nbsp;al. (2020). Array programming with NumPy. <i>Nature</i>,
+  585, 357&ndash;362.</li>
+  <li>The pandas development team. <i>pandas-dev/pandas: pandas</i>. Zenodo.</li>
+  <li>Hopsworks. <i>Feature Store and Model Registry documentation</i>.
+  <span class="mono">docs.hopsworks.ai</span></li>
+  <li>Streamlit, FastAPI and Plotly documentation, for the two front ends and the charts.</li>
+</ol>
+</div>
 
 <p class="footnote" style="margin-top:16pt; border-top:1px solid var(--rule); padding-top:8pt">
 Every figure in this report was produced by <code>notebooks/01_eda.ipynb</code> or

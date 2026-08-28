@@ -9,8 +9,6 @@ feeds both a JSON API and a Streamlit dashboard.
 
 **[▸ Open the live dashboard](https://aqipredictor-ywkyutcdt9avvqymaaln69.streamlit.app/)**
 
-![The dashboard: current reading, three dated forecasts with their measured error, observed history against the forecast, and the walk-forward comparison against the persistence baseline](docs/dashboard.png)
-
 [![Tests](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/tests.yml/badge.svg)](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/tests.yml)
 [![Feature Pipeline](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/feature_pipeline.yml/badge.svg)](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/feature_pipeline.yml)
 [![Training Pipeline](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/training_pipeline.yml/badge.svg)](https://github.com/imadkhan4478/AQI_Predictor/actions/workflows/training_pipeline.yml)

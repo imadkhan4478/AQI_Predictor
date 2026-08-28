@@ -368,3 +368,30 @@ class TestEmptyBaselineColumns:
         trimmed, missing = dash.drop_empty_baselines(self.rows())
         assert trimmed[0]["R2 baseline"] == "0.814"
         assert "R2" not in missing
+
+
+class TestFreshnessThresholds:
+    """How loudly is a separate question from whether. The age is always stated;
+    the escalation is calibrated to this pipeline's real cadence."""
+
+    def test_a_few_hours_is_normal_operation_not_a_fault(self):
+        """GitHub delivers the hourly schedule 3-7 times a day, so warning at two
+        hours put a warning on a healthy system."""
+        assert dash.freshness_level(0.5) == "current"
+        assert dash.freshness_level(3.0) == "current"
+        assert dash.freshness_level(5.9) == "current"
+
+    def test_past_the_pipeline_tolerance_it_is_late(self):
+        assert dash.freshness_level(6.0) == "late"
+        assert dash.freshness_level(23.9) == "late"
+
+    def test_past_a_day_the_page_is_describing_yesterday(self):
+        assert dash.freshness_level(24.0) == "broken"
+        assert dash.freshness_level(265.0) == "broken"
+
+    def test_the_dashboard_threshold_matches_the_pipeline_tolerance(self):
+        """Two components judging the same store by different rules is how the
+        dashboard and the pipeline disagreed about staleness in the first place."""
+        from feature_pipeline.pipeline import STALE_AFTER_HOURS as pipeline_tolerance
+
+        assert dash.STALE_AFTER_HOURS == pipeline_tolerance

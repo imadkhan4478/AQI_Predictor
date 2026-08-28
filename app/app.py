@@ -63,10 +63,14 @@ SHAP_FEATURES_SHOWN = 15
 # local time. UTC stays the storage and API format.
 DISPLAY_TIMEZONE = os.environ.get("CITY_TZ", "Asia/Karachi")
 
-# An hourly pipeline that is two hours behind is late; a day behind is broken.
-# Stated on the page because the claim "refreshed hourly" was false for eleven
-# days and nothing on the page contradicted it.
-STALE_AFTER_HOURS = 2
+# GitHub delivers this "hourly" schedule 3-7 times a day (README), so a reading a
+# few hours old is normal operation, not a fault -- the same reasoning that set the
+# pipeline's own tolerance to six hours. Flagging at two produced a warning on a
+# healthy system, which is how people learn to ignore warnings.
+STALE_AFTER_HOURS = 6
+
+# Past a day the page is describing yesterday while offering a "3-day forecast",
+# which a reader cannot be left to discover for themselves.
 BROKEN_AFTER_HOURS = 24
 
 # Lahore exceeds 300 in winter, but a fixed 0-500 axis flattens every summer
@@ -283,28 +287,57 @@ def relative_age(age_hours):
     return f"{round(age_hours / 24)} days ago"
 
 
-def render_freshness(payload):
-    """State how old the reading is, and say so loudly when it is too old.
+def freshness_level(age_hours):
+    """"current" | "late" | "broken" for an observation this many hours old.
 
-    The dashboard once served an eleven-day-old reading under a caption promising
-    hourly refresh. A claim a page makes about itself has to be falsifiable on
-    that page.
+    Separated from the rendering so the thresholds are testable and stated in one
+    place rather than implied by which colour a branch happens to pick.
+    """
+    if age_hours >= BROKEN_AFTER_HOURS:
+        return "broken"
+    if age_hours >= STALE_AFTER_HOURS:
+        return "late"
+    return "current"
+
+
+def render_freshness(payload):
+    """State when the reading is from, and escalate only when that matters.
+
+    The age is always on the page: the dashboard once served an eleven-day-old
+    reading under a caption promising hourly refresh, and a claim a page makes about
+    itself has to be falsifiable on that page. But *how loudly* is a separate
+    question from *whether*. A few hours is this pipeline's normal cadence and gets
+    a quiet line; past a day the page is describing yesterday while offering a
+    three-day forecast, and that a reader must be told plainly.
+
+    The diagnosis -- stalled materialisation, or a gap in recent history -- is
+    operator detail. It moves into a disclosure so the page reads as a forecast
+    rather than as a status console.
     """
     age_hours, local_text, tz_label = observation_age(payload)
-    # "complete", not "latest": serving uses the newest row that has a full set of
-    # lag features, which is not the newest row when there is a gap behind it.
-    line = f"Latest complete observation **{local_text} {tz_label}** — {relative_age(age_hours)}"
+    level = freshness_level(age_hours)
+    line = f"Reading from **{local_text} {tz_label}** · {relative_age(age_hours)}"
 
-    if age_hours >= BROKEN_AFTER_HOURS:
-        st.error(
-            f"{line}. Either the hourly pipeline is not reaching the offline store or "
-            "there is a gap in the recent history, so every number below describes that "
-            "observation rather than now."
+    if level == "broken":
+        st.warning(
+            f"{line}. The forecast below was made from that reading, not from the "
+            "current hour."
         )
-    elif age_hours >= STALE_AFTER_HOURS:
-        st.warning(f"{line}. Later than an hourly pipeline should be.")
+        with st.expander("Why the reading is not current"):
+            st.markdown(
+                "Serving uses the newest observation that has a **complete** set of lag "
+                "features, which needs 72 contiguous hours behind it. Two things push that "
+                "backwards:\n\n"
+                "- the hourly pipeline not reaching the offline store, or\n"
+                "- gaps in the recent history wide enough that the rolling features cannot "
+                "be computed.\n\n"
+                "The pipeline asserts both on every run and fails loudly when either is "
+                "true; see the technical report, §8.3."
+            )
+    elif level == "late":
+        st.caption(f"{line} — a little behind the hourly schedule.")
     else:
-        st.success(line)
+        st.caption(line)
     return age_hours
 
 

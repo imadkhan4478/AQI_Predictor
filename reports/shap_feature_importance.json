@@ -5,167 +5,167 @@
     {
       "column": "aqi",
       "label": "Current AQI",
-      "mean_abs_shap": 79.79559243450166
+      "mean_abs_shap": 83.75099581052339
     },
     {
       "column": "pressure",
       "label": "Pressure",
-      "mean_abs_shap": 20.95703261996243
+      "mean_abs_shap": 21.341819838171666
     },
     {
       "column": "aqi_rmean_72",
       "label": "AQI 72h average",
-      "mean_abs_shap": 12.900043208642415
+      "mean_abs_shap": 15.734631552689342
     },
     {
       "column": "feels_like",
       "label": "Apparent temperature",
-      "mean_abs_shap": 10.615726237614993
+      "mean_abs_shap": 11.811060687703087
     },
     {
       "column": "aqi_rstd_72",
       "label": "AQI 72h variability",
-      "mean_abs_shap": 9.315440717649233
+      "mean_abs_shap": 11.469192831803149
     },
     {
       "column": "temp",
       "label": "Temperature",
-      "mean_abs_shap": 7.5590006658039375
+      "mean_abs_shap": 6.714920251951327
     },
     {
       "column": "pm2_5",
       "label": "PM2.5",
-      "mean_abs_shap": 6.906545135317773
-    },
-    {
-      "column": "aqi_lag_1",
-      "label": "AQI 1h ago",
-      "mean_abs_shap": 6.349186176074281
-    },
-    {
-      "column": "clouds",
-      "label": "Cloud cover",
-      "mean_abs_shap": 6.2954816294108
+      "mean_abs_shap": 6.644729665278938
     },
     {
       "column": "day_of_week",
       "label": "Day of week",
-      "mean_abs_shap": 5.887506031395092
+      "mean_abs_shap": 6.259517449400706
+    },
+    {
+      "column": "clouds",
+      "label": "Cloud cover",
+      "mean_abs_shap": 5.992206847574196
     },
     {
       "column": "nh3",
       "label": "Ammonia (NH3)",
-      "mean_abs_shap": 5.305580606479918
+      "mean_abs_shap": 5.113360422761964
     },
     {
-      "column": "aqi_lag_24",
-      "label": "AQI 24h ago",
-      "mean_abs_shap": 5.246155241129525
-    },
-    {
-      "column": "aqi_rmean_24",
-      "label": "AQI 24h average",
-      "mean_abs_shap": 5.008958763763844
+      "column": "aqi_lag_1",
+      "label": "AQI 1h ago",
+      "mean_abs_shap": 4.645036115907674
     },
     {
       "column": "hour_cos",
       "label": "Hour of day (cyclic)",
-      "mean_abs_shap": 2.9671184734857596
+      "mean_abs_shap": 3.2793016406654183
     },
     {
-      "column": "aqi_lag_12",
-      "label": "AQI 12h ago",
-      "mean_abs_shap": 2.7884342687344796
-    },
-    {
-      "column": "no2",
-      "label": "Nitrogen dioxide (NO2)",
-      "mean_abs_shap": 2.338778302335429
-    },
-    {
-      "column": "hour_sin",
-      "label": "Hour of day (cyclic)",
-      "mean_abs_shap": 2.3288657542201605
-    },
-    {
-      "column": "pm10",
-      "label": "PM10",
-      "mean_abs_shap": 2.312707973328663
-    },
-    {
-      "column": "aqi_lag_6",
-      "label": "AQI 6h ago",
-      "mean_abs_shap": 1.9298678090015178
+      "column": "aqi_lag_24",
+      "label": "AQI 24h ago",
+      "mean_abs_shap": 3.1977993915501073
     },
     {
       "column": "humidity",
       "label": "Humidity",
-      "mean_abs_shap": 1.8817440282674778
-    },
-    {
-      "column": "co",
-      "label": "Carbon monoxide (CO)",
-      "mean_abs_shap": 1.8524237702589401
+      "mean_abs_shap": 2.629088013761669
     },
     {
       "column": "aqi_rmean_3",
       "label": "AQI 3h average",
-      "mean_abs_shap": 1.5158935820639814
+      "mean_abs_shap": 2.5318797746351476
     },
     {
-      "column": "so2",
-      "label": "Sulfur dioxide (SO2)",
-      "mean_abs_shap": 1.3308945485114871
+      "column": "hour_sin",
+      "label": "Hour of day (cyclic)",
+      "mean_abs_shap": 2.5293426737668705
     },
     {
-      "column": "aqi_rstd_3",
-      "label": "AQI 3h variability",
-      "mean_abs_shap": 1.2468320683420115
+      "column": "aqi_lag_6",
+      "label": "AQI 6h ago",
+      "mean_abs_shap": 2.506193410565833
     },
     {
-      "column": "aqi_change_rate",
-      "label": "AQI change rate",
-      "mean_abs_shap": 1.2288789411428966
+      "column": "pm10",
+      "label": "PM10",
+      "mean_abs_shap": 2.4778339583129703
     },
     {
-      "column": "no",
-      "label": "Nitric oxide (NO)",
-      "mean_abs_shap": 1.0954977979379736
+      "column": "aqi_rmean_24",
+      "label": "AQI 24h average",
+      "mean_abs_shap": 2.0569923521858247
     },
     {
       "column": "aqi_rstd_24",
       "label": "AQI 24h variability",
-      "mean_abs_shap": 0.9391663355434239
+      "mean_abs_shap": 1.9854481517791245
+    },
+    {
+      "column": "co",
+      "label": "Carbon monoxide (CO)",
+      "mean_abs_shap": 1.7399472262473878
+    },
+    {
+      "column": "aqi_lag_12",
+      "label": "AQI 12h ago",
+      "mean_abs_shap": 1.6811464711807858
+    },
+    {
+      "column": "so2",
+      "label": "Sulfur dioxide (SO2)",
+      "mean_abs_shap": 1.6226505013068666
+    },
+    {
+      "column": "no2",
+      "label": "Nitrogen dioxide (NO2)",
+      "mean_abs_shap": 1.481984404291587
+    },
+    {
+      "column": "no",
+      "label": "Nitric oxide (NO)",
+      "mean_abs_shap": 1.3167072190845972
     },
     {
       "column": "wind_deg",
       "label": "Wind direction",
-      "mean_abs_shap": 0.9002683315592444
+      "mean_abs_shap": 1.2528685740277037
+    },
+    {
+      "column": "aqi_change_rate",
+      "label": "AQI change rate",
+      "mean_abs_shap": 0.9675188455016385
+    },
+    {
+      "column": "aqi_rstd_3",
+      "label": "AQI 3h variability",
+      "mean_abs_shap": 0.9305072887700384
     },
     {
       "column": "hour",
       "label": "Hour of day",
-      "mean_abs_shap": 0.8059527069809873
+      "mean_abs_shap": 0.9093663670659019
     },
     {
       "column": "aqi_lag_2",
       "label": "AQI 2h ago",
-      "mean_abs_shap": 0.6925931345731634
-    },
-    {
-      "column": "o3",
-      "label": "Ozone (O3)",
-      "mean_abs_shap": 0.40369447491426236
+      "mean_abs_shap": 0.8130208307694337
     },
     {
       "column": "aqi_lag_3",
       "label": "AQI 3h ago",
-      "mean_abs_shap": 0.33927553265017296
+      "mean_abs_shap": 0.6012810636140993
+    },
+    {
+      "column": "o3",
+      "label": "Ozone (O3)",
+      "mean_abs_shap": 0.4386856611939705
     },
     {
       "column": "wind_speed",
       "label": "Wind speed",
-      "mean_abs_shap": 0.27099522038350166
+      "mean_abs_shap": 0.1884335809737832
     }
   ]
 }
